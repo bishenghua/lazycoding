@@ -18,6 +18,43 @@ import (
 	"github.com/bishenghua/lazycoding/internal/session"
 )
 
+// discoverLocalSession returns the most recently modified Claude session ID for
+// workDir by scanning ~/.claude/projects/<encoded>/*.jsonl.  Claude Code stores
+// all sessions (interactive and --print alike) in the same per-project
+// directory, so this lets lazycoding resume a session that was started in the
+// local CLI without any manual configuration.  Returns "" when nothing is found.
+func discoverLocalSession(workDir string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	// Claude encodes the project path by replacing every '/' with '-'.
+	encoded := strings.ReplaceAll(workDir, "/", "-")
+	projectDir := filepath.Join(home, ".claude", "projects", encoded)
+
+	entries, err := os.ReadDir(projectDir)
+	if err != nil {
+		return ""
+	}
+
+	var newestID string
+	var newestMod time.Time
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(newestMod) {
+			newestID = strings.TrimSuffix(e.Name(), ".jsonl")
+			newestMod = info.ModTime()
+		}
+	}
+	return newestID
+}
+
 // safeSlice returns s[:n] stepped back to the nearest valid UTF-8 rune
 // boundary, preventing invalid sequences when cutting multi-byte characters.
 func safeSlice(s string, n int) string {
@@ -236,6 +273,14 @@ func (lc *Lazycoding) handleMessage(ctx context.Context, ev channel.InboundEvent
 	var claudeSessionID string
 	if sess, ok := lc.store.Get(sessKey); ok {
 		claudeSessionID = sess.ClaudeSessionID
+	} else if workDir != "" {
+		// No stored session yet.  Try to discover the most recent session from
+		// Claude Code's own project store so we can seamlessly resume a session
+		// that was started in the local CLI.
+		if id := discoverLocalSession(workDir); id != "" {
+			slog.Info("discovered local Claude session", "work_dir", workDir, "session", id)
+			claudeSessionID = id
+		}
 	}
 
 	slog.Info("request started",
