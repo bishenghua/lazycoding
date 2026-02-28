@@ -301,13 +301,14 @@ Bot：⏳ thinking…
 
 ### 消息队列
 
-Claude 处理期间发出的新消息会自动排队，按顺序处理，不会丢失，也不会打断正在进行的任务。
+Claude 处理期间发出的新消息会自动排队，按顺序处理，不会丢失，也不会打断正在进行的任务。消息入队时会立即收到确认通知。
 
 ```
 你：分析这个文件
 Bot：⏳ thinking…
 
 你：（同时发）顺便检查一下依赖   ← 自动排队
+Bot：⏳ 已排队，将在当前任务完成后处理。
 
 Bot：分析结果：…
 Bot：⏳ thinking…   ← 开始处理排队的消息
@@ -493,6 +494,10 @@ log:
 
 Claude 会话 ID 自动保存到 `~/.lazycoding/sessions.json`，重启 lazycoding 后无缝续接，无需任何额外配置。
 
+会话以**工作目录路径**为 key（若已配置），而非对话 ID。这意味着同一个项目目录下的多个 Telegram 对话（例如手机私聊和桌面群组各一个）自动共享同一个 Claude 会话，请求之间也会自动串行化。
+
+当指定工作目录没有已存储的 lazycoding 会话时，会自动扫描 `~/.claude/projects/` 发现本地 Claude Code CLI 留下的最近会话并恢复，让本地终端工作和 Telegram 无缝衔接。如果 lazycoding 已有该目录的存储会话，优先使用自己的（运行 `/reset` 后会触发自动发现）。
+
 ### JSON 日志格式（接入日志系统）
 
 ```yaml
@@ -551,4 +556,16 @@ transcription:
 ```
 
 **Q：重启后 session 是否会丢失？**
-→ 不会。Session ID 持久化在 `~/.lazycoding/sessions.json`，重启后自动恢复。
+→ 不会。Session ID 持久化在 `~/.lazycoding/sessions.json`，重启后自动恢复。会话同样以工作目录为 key，同一项目目录的多个 Telegram 对话自动共享一个 Claude 会话。
+
+**问：本地终端和 Telegram 能共享同一个 Claude 会话吗？**
+→ 可以。当 lazycoding 没有该工作目录的存储会话时，会自动从 `~/.claude/projects/` 发现最近使用的会话并恢复。这意味着：
+  - 在本地终端工作 → 切换到 Telegram 继续相同上下文
+  - 在 Telegram 工作 → 然后用 `claude --resume <session-id>` 在本地继续（会话 ID 可通过 `/session` 查看）
+
+如果 lazycoding 已有 stored session，优先使用自己的。运行 `/reset` 清除后，下次会自动发现最新的本地会话。
+
+注意：不要同时在本地 CLI 和 Telegram 使用同一个会话，两个并发调用写入同一会话可能产生不可预期的结果。
+
+**问：收到"Session contains expired thinking-block signatures"错误**
+→ 这是 Claude 扩展思考模式的会话签名过期导致的。发送 `/reset` 开启新会话即可。

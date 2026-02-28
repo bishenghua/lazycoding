@@ -184,11 +184,11 @@ Four backends, selectable via config with no code changes. See [Voice input pipe
 
 ## Per-Conversation Project Mapping
 
-The session store and request-serialisation map are both keyed by **`ConversationID`** (the Telegram chat ID string), not by user ID. Rationale:
+The session store and request-serialisation map are both keyed by **`sessionKey`**, which is the work directory path when one is configured, or the `ConversationID` otherwise (`sessionKey = workDir if non-empty, else convID`). Rationale:
 
-- Each chat is configured to point at exactly one project directory.
+- Multiple conversations that point at the same project directory share one Claude session and are serialised automatically.
 - All members of a group share the same Claude session and see each other's progress.
-- Private chats are naturally isolated from one another.
+- Conversations without a configured work directory fall back to chat ID isolation.
 
 ### Config resolution (waterfall)
 
@@ -221,16 +221,20 @@ Telegram update arrives
        ├─ IsCommand  → go handleCommand()    ← fast, no Claude subprocess
        └─ else       → dispatch(ev)
                            │
-                           ├─ Claude already running for this convID?
-                           │      YES → append ev to queue; return
-                           │      NO  → startRequest(convID, ev)
+                           ├─ Claude already running for this sessionKey (workDir or convID)?
+                           │      YES → append ev to queue
+                           │          → SendText("⏳ Queued — will run after the current task.")
+                           │            to conversation; return
+                           │      NO  → startRequest(ev)
                            │
                            └─ startRequest()
                                   ├─ ctx, cancel = context.WithTimeout(900s)
-                                  ├─ pending[convID] = {cancel, done, queue}
+                                  ├─ pending[sessionKey] = {cancel, done, queue}
+                                  ├─ go typingKeepalive(convID, every 4s)
                                   └─ go handleMessage(ctx, ev)
                                           ├─ WorkDirFor / ExtraFlagsFor
-                                          ├─ store.Get(convID) → sessionID
+                                          ├─ store.Get(sessionKey) → sessionID
+                                          │    (fallback: discoverLocalSession(workDir))
                                           ├─ ag.Stream(ctx, req) → events chan
                                           ├─ SendKeyboard("⏳ thinking…",
                                           │    [[✕ Cancel]]) → handle
@@ -239,11 +243,16 @@ Telegram update arrives
                                                   ├─ EventKindToolUse → update placeholder
                                                   ├─ EventKindToolResult → show output
                                                   ├─ EventKindResult  → final flush + Seal
+                                                  │    if tools+text > 4096 chars:
+                                                  │      update placeholder with tool summary
+                                                  │      send full reply text as new message(s)
                                                   └─ EventKindError   → Seal + send error msg
+                                                       if thinking-signature error:
+                                                         prompt user to /reset
                                                        │
                                                        ▼ goroutine exits
                                                dequeue: if queue non-empty
-                                                   → startRequest(convID, queue[0])
+                                                   → startRequest(queue[0])
 ```
 
 ---
@@ -272,10 +281,10 @@ The core UX challenge is mapping a streaming terminal session to a chat message.
 | `EventKindText` | Append to buffer; `UpdateText` if throttle elapsed |
 | `EventKindToolUse` | Replace placeholder with tool name + input |
 | `EventKindToolResult` | Append truncated output under tool entry |
-| `EventKindResult` | Final flush, `Seal`, optional quick-reply keyboard |
-| `EventKindError` | `Seal` + send `⚠️ Error:` message |
+| `EventKindResult` | Final flush, `Seal`, optional quick-reply keyboard; if combined tool summary + reply text exceeds 4096 chars, update placeholder with tool summary and send the full reply text as new message(s) via `Split` |
+| `EventKindError` | `Seal` + send `⚠️ Error:` message; if the error is an expired thinking-block signature, prompt the user to run `/reset` |
 
-**Message size limits:** Telegram caps messages at 4096 bytes. `Split` breaks large responses into multiple messages; `UpdateText` uses `Truncate`. Both functions respect UTF-8 rune boundaries (never cut a multi-byte character in half).
+**Message size limits:** Telegram caps messages at 4096 bytes. `Split` breaks large responses into multiple messages; `UpdateText` uses `Truncate`. Both functions respect UTF-8 rune boundaries (never cut a multi-byte character in half). When `EventKindResult` arrives and the combined content (tool summary + reply text) exceeds 4096 characters, the tool summary is kept in the original placeholder message and the full reply text is sent as one or more new messages using `Split`, ensuring no content is ever truncated.
 
 **HTML rendering:** All text from Claude is passed through `MarkdownToTelegramHTML`, which converts fenced code blocks, tables (Unicode box-drawing), headers, bold/italic/strikethrough, inline code, blockquotes, links, and bullet lists into Telegram's HTML parse mode. Raw HTML entities are escaped using only the four named entities Telegram accepts (`&amp;` `&lt;` `&gt;` `&quot;`).
 
@@ -385,12 +394,12 @@ The event text is the prompt sent to Claude — it tells Claude exactly where th
 │                  └─ on exit: dequeue next item if any           │
 └─────────────────────────────────────────────────────────────────┘
 
-pending  map[convID → *pendingState]  guarded by pendingMu (outer lock)
-pendingState.queue                    guarded by pendingState.mu (inner lock)
+pending  map[sessionKey → *pendingState]  (sessionKey = workDir or convID)  guarded by pendingMu (outer lock)
+pendingState.queue                        guarded by pendingState.mu (inner lock)
 ```
 
 **Invariants:**
-- At most **one** Claude subprocess runs per conversation at any time.
+- At most **one** Claude subprocess runs per work directory (or conversation, when no work dir is configured) at any time.
 - Messages are never dropped; they queue until Claude is ready.
 - `cancelConversation()` cancels the subprocess *and* drains the queue atomically.
 - All locks are short-held (no I/O inside critical sections).
@@ -413,6 +422,14 @@ The `hasKeyboard` flag on `tgHandle` ensures the button is removed the first tim
 
 After `consumeStream` returns, `detectQuickReplies(finalText)` inspects the last non-empty line. If it ends with `?`, a `[✅ Yes]` / `[❌ No]` keyboard is sent as a separate message. Clicking a button dispatches the button's `Data` string (`"yes"` or `"no"`) as a new text message, which joins the queue and is processed normally.
 
+### Typing Keepalive
+
+A background goroutine sends `SendTyping` to the conversation every 4 seconds for the duration of the Claude request. Telegram's "typing…" indicator normally disappears after 5 seconds; the keepalive ensures it stays visible throughout long-running tasks, giving the user a clear signal that the bot is still working.
+
+### Queue Notification
+
+When a message arrives while Claude is still running, it is queued and the sender immediately receives `⏳ Queued — will run after the current task.` This ensures users are not left wondering whether their message was received.
+
 ---
 
 ## Session Persistence
@@ -428,8 +445,26 @@ Session{
 
 This means:
 - **Restart lazycoding** → sessions reload → Claude context is preserved.
-- **`/reset`** → `store.Delete(convID)` → Claude starts a fresh session.
+- **`/reset`** → `store.Delete(sessionKey)` → Claude starts a fresh session.
 - **Session file manually deleted** → all conversations start fresh (no harm done).
+
+### Session Key
+
+Sessions are keyed by **work directory path** (when configured) rather than conversation ID. `sessionKey()` returns `workDir` if non-empty, otherwise `convID`. Consequences:
+
+- Multiple Telegram conversations pointing at the same directory share one Claude session.
+- Requests for the same directory are serialised (at most one Claude subprocess per directory).
+- `/reset` and `/session` commands operate on the shared session key.
+
+### Local Session Discovery
+
+When no stored session exists for a work directory, `discoverLocalSession(workDir)` scans `~/.claude/projects/<encoded>/` for `.jsonl` files and returns the most recently modified filename (without `.jsonl`) as the session ID to resume.
+
+Claude Code encodes the project path by replacing every `/` with `-`, so `/Users/hua/projects/foo` maps to `~/.claude/projects/-Users-hua-projects-foo/`.
+
+Since Claude Code stores all sessions (interactive and `--print` alike) in the same per-project directory, this allows lazycoding to transparently continue a session started in the local CLI, and vice versa.
+
+If lazycoding already has a stored session, it takes priority (the discovered local session is ignored until `/reset` is run).
 
 ---
 
@@ -476,8 +511,13 @@ The trade-off: Claude cannot ask interactive clarifying questions mid-task. The 
 
 Telegram supports editing existing messages within a ~48-hour window. Edit-in-place keeps the conversation thread clean (one message per Claude turn) and provides a natural "streaming" feel on mobile. The throttle (`edit_throttle_ms`, default 1000 ms) prevents 429 rate-limit errors.
 
-For large responses (> 4096 bytes), the first chunk is sent as the main message and additional chunks are sent as follow-up messages.
+For large responses where the combined tool summary and reply text exceed 4096 bytes, the tool summary is kept in the original placeholder message and the full reply text is sent as one or more new messages via `Split`.
 
-### Session key = ConversationID, not UserID
+### Session key = work directory path (with ConversationID fallback)
 
-Keying by chat ID means all members of a group share one Claude session for their project. This is intentional — it mirrors how a team shares a codebase. If per-user isolation were needed (e.g., each developer works on their own branch), the key could be changed to `UserKey` with minimal code changes.
+`sessionKey()` returns the configured work directory path when one is set, and falls back to the conversation ID otherwise. Consequences:
+
+- Multiple Telegram conversations (for example, your phone and your desktop) that point at the same project directory automatically share one Claude session and have their requests serialised — no duplicate work, no race conditions.
+- This mirrors how a team shares a codebase: the project directory is the natural unit of collaboration, not a particular chat window.
+- When no work directory is configured, the fallback to `convID` preserves the original per-conversation isolation.
+- If per-user isolation were needed inside a shared project (e.g., each developer works on their own branch), the key could be changed to `UserKey` with minimal code changes.

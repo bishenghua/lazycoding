@@ -301,7 +301,7 @@ You: Analyse this file
 Bot: ⏳ thinking…
 
 You: (Claude is still running) Also check the dependencies
-     → queued automatically
+Bot: ⏳ Queued — will run after the current task.
 
 Bot: Analysis: …
 Bot: ⏳ thinking…   ← starts the queued request
@@ -484,6 +484,10 @@ Prints a real-time, human-readable transcript to stderr:
 
 Claude session IDs survive bot restarts. They are saved to `~/.lazycoding/sessions.json` automatically — no configuration needed. After a restart, each conversation resumes from exactly where it left off.
 
+Sessions are keyed by **work directory path**. Multiple Telegram conversations pointing at the same project (for example, your phone and your desktop client in separate chats) automatically share a single Claude session, and their requests are serialised so they never overlap.
+
+When lazycoding has no stored session for a work directory, it automatically scans `~/.claude/projects/` for sessions left by the local Claude Code CLI and resumes the most recently used one. This lets you start a task in the terminal and seamlessly continue it from Telegram (or vice versa). If lazycoding already has a stored session for that directory, it takes priority — run `/reset` to clear it and let auto-discovery pick up the latest local session.
+
 ### JSON logging
 
 ```yaml
@@ -546,4 +550,16 @@ command:   /download src/main.go
 → `brew install whisper-cpp` then `go build -tags whisper ./cmd/lazycoding/`
 
 **Q: Session lost after restart**
-→ Sessions are stored in `~/.lazycoding/sessions.json` automatically and survive restarts. If the file is missing or corrupt, a fresh session is started.
+→ Sessions are stored in `~/.lazycoding/sessions.json` automatically and survive restarts. If the file is missing or corrupt, a fresh session is started. Sessions are also keyed by work directory, so multiple Telegram conversations pointing at the same project automatically share one Claude session.
+
+**Q: Can I share a Claude session between the local CLI and Telegram?**
+→ Yes. When lazycoding has no stored session for a work directory, it automatically discovers the most recently used session from `~/.claude/projects/` and resumes it. This means you can:
+  - Work locally in the terminal → switch to Telegram and continue the same context
+  - Work from Telegram → then `claude --resume <session-id>` locally (session ID visible via `/session`)
+
+If lazycoding already has a stored session, that takes priority. Run `/reset` to clear it and let auto-discovery pick up the latest local session.
+
+Note: do not use both simultaneously (local CLI + Telegram) for the same session; two concurrent invocations writing to the same session can produce unpredictable results.
+
+**Q: "Session contains expired thinking-block signatures" error**
+→ This happens when Claude's extended thinking session has expired signature data. Send `/reset` to start a fresh session.
