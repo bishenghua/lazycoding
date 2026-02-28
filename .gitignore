@@ -1,0 +1,31 @@
+# Build output
+/lazycoding
+/lazycoding.exe
+dist/
+
+# Config with real credentials – use config.example.yaml as template
+config.yaml
+config.local.yaml
+*.local.yaml
+
+# Session / runtime data
+.lazycoding/
+
+# Project working directories (user code, not part of this repo)
+project/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Claude Code session data
+.claude/
+
+# macOS
+.DS_Store
+
+# Go test cache / coverage
+*.test
+*.out
+coverage.html

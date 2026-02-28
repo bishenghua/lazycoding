@@ -1,0 +1,124 @@
+# ╔══════════════════════════════════════════════════════════════╗
+# ║              lazycoding 配置文件                             ║
+# ╚══════════════════════════════════════════════════════════════╝
+#
+# 使用方法：
+#   cp config.example.yaml config.yaml
+#   # 编辑 config.yaml，填入真实的 token 和路径
+#   ./lazycoding config.yaml
+#
+# 核心概念：每个 Telegram 对话（私聊 / 群组 / 频道）可以映射到本机
+# 的一个工作目录。对那个对话发消息，Claude 就在对应目录里工作。
+
+# ─────────────────────────────────────────────────────────────
+# Telegram 配置
+# ─────────────────────────────────────────────────────────────
+telegram:
+  # 从 @BotFather 获取的 Bot Token（必填）
+  # 新建 bot：打开 Telegram → 搜索 @BotFather → /newbot
+  token: "YOUR_BOT_TOKEN_HERE"
+
+  # 白名单：只有这些 user_id 的用户才能使用 bot。
+  # 留空（删除此字段或设为 []）表示所有人均可使用。
+  # 获取自己的 user_id：在 Telegram 搜索 @userinfobot，发任意消息。
+  allowed_user_ids:
+    - 123456789   # 替换为你自己的 user_id
+
+  # 流式消息的编辑节流（毫秒）。
+  # Telegram 对编辑频率限制较宽松，1000 ms 兼顾流畅度与安全性。
+  # 若出现 429 Too Many Requests 错误，可适当调大（如 1500）。
+  edit_throttle_ms: 1000
+
+
+# ─────────────────────────────────────────────────────────────
+# Claude CLI 全局默认值
+# ─────────────────────────────────────────────────────────────
+claude:
+  # 默认工作目录。
+  # 若某个对话在 channels 里没有配置，Claude 就在这个目录运行。
+  # 留空则使用 bot 进程的启动目录。
+  work_dir: "/Users/yourname/projects/my-project"
+
+  # 附加给每次 claude 调用的额外参数（全局默认）。
+  # --dangerously-skip-permissions 已被自动加入，无需重复填写。
+  # 示例：指定模型
+  #   extra_flags:
+  #     - "--model"
+  #     - "claude-opus-4-6"
+  extra_flags: []
+
+  # 每次请求的超时时间（秒）。超过此时间 Claude 进程会被强制终止。
+  timeout_sec: 900
+
+
+# ─────────────────────────────────────────────────────────────
+# 每个对话的工作目录配置（channels）
+# ─────────────────────────────────────────────────────────────
+#
+# 格式：
+#   channels:
+#     "<chat_id>":
+#       work_dir: "/绝对路径/项目目录"
+#       extra_flags: []          # 可选，覆盖全局 extra_flags
+#
+# 未在此列出的对话，使用 claude.work_dir 作为工作目录。
+# 获取 chat_id：启动 bot 后在目标对话里发 /workdir，查看终端日志。
+# 注意：YAML 里 chat_id 必须用引号括起来（负数尤其如此）。
+#
+channels:
+  # ── 示例 1：私聊 → 负责 Project-A ──────────────────────────
+  # "123456789":
+  #   work_dir: "/Users/yourname/projects/project-a"
+
+  # ── 示例 2：群组 → 负责 Project-B ──────────────────────────
+  # "-1001234567890":
+  #   work_dir: "/Users/yourname/projects/project-b"
+
+  # ── 示例 3：另一个群组，使用不同模型 ──────────────────────
+  # "-1009876543210":
+  #   work_dir: "/Users/yourname/projects/project-c"
+  #   extra_flags:
+  #     - "--model"
+  #     - "claude-opus-4-6"
+
+
+# ─────────────────────────────────────────────────────────────
+# 语音转文字（可选）
+# ─────────────────────────────────────────────────────────────
+transcription:
+  enabled: false          # 改为 true 开启语音识别
+  backend: "groq"         # "groq" | "whisper-native" | "whisper-cpp" | "whisper"
+
+  # ── 方案 A：Groq API（推荐，零安装）──────────────────────
+  groq:
+    api_key: ""           # 填入从 console.groq.com 获取的 API Key
+    model: "whisper-large-v3-turbo"
+    language: "zh"        # 留空自动检测；中文 "zh"，英文 "en"
+
+  # ── 方案 B：whisper-native（内嵌 CGo）─────────────────────
+  # 构建命令：go build -tags whisper ./cmd/lazycoding/
+  whisper_native:
+    model: "base"         # 模型名（自动下载）或 .ggml 文件绝对路径
+    model_dir: ""         # 模型缓存目录，默认 ~/.cache/lazycoding/whisper/
+    language: "zh"
+
+  # ── 方案 C：whisper.cpp CLI（本地）────────────────────────
+  whisper_cpp:
+    bin: "whisper-cli"
+    model: ""             # 必填：.ggml 模型文件完整路径
+    language: "zh"
+
+  # ── 方案 D：openai-whisper（Python）───────────────────────
+  whisper_py:
+    bin: "whisper"
+    model: "base"
+    language: "zh"
+
+
+# ─────────────────────────────────────────────────────────────
+# 日志配置
+# ─────────────────────────────────────────────────────────────
+log:
+  format: "text"   # "text"（人类可读）| "json"（适合日志收集系统）
+  level: "info"    # "debug" | "info" | "warn" | "error"
+  verbose: false   # true = 在终端实时打印对话内容（用户消息 / 工具调用 / Claude 回复）
