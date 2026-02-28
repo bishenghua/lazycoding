@@ -91,7 +91,7 @@ func (t *whisperNativeTranscriber) Transcribe(ctx context.Context, audioPath str
 	text = strings.ReplaceAll(text, "[BLANK_AUDIO]", "")
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return "", fmt.Errorf("语音内容为空或无法识别")
+		return "", fmt.Errorf("transcription result is empty")
 	}
 	return text, nil
 }

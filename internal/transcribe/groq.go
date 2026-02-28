@@ -74,7 +74,7 @@ func (t *groqTranscriber) Transcribe(ctx context.Context, audioPath string) (str
 
 	text := strings.TrimSpace(string(respBody))
 	if text == "" {
-		return "", fmt.Errorf("语音内容为空或无法识别")
+		return "", fmt.Errorf("transcription result is empty")
 	}
 	return text, nil
 }

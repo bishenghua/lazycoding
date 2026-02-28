@@ -9,30 +9,31 @@ DIST     := dist
         release-darwin-amd64 release-darwin-arm64 \
         release-windows-amd64
 
-# ── 本机构建 ─────────────────────────────────────────────────
+# ── Local builds ─────────────────────────────────────────────
 
-## build: 为当前平台编译（不含语音识别）
+## build: compile for the current platform (no voice recognition)
 build:
 	go build $(LDFLAGS) -o $(BIN) $(PKG)
 
-## build-whisper: 为当前平台编译（含 CGo whisper-native 语音识别）
-##   前提：brew install whisper-cpp ffmpeg
+## build-whisper: compile with embedded CGo whisper-native voice recognition
+##   prerequisite: brew install whisper-cpp ffmpeg
 build-whisper:
 	go build -tags whisper $(LDFLAGS) -o $(BIN) $(PKG)
 
-## test: 运行所有测试
+## test: run all tests
 test:
 	go test ./...
 
-## clean: 删除构建产物
+## clean: remove build artefacts
 clean:
 	rm -f $(BIN) $(BIN).exe
 	rm -rf $(DIST)
 
-# ── 交叉编译发布包 ────────────────────────────────────────────
-# 注意：CGo（-tags whisper）不支持交叉编译，发布包均不含 whisper-native。
+# ── Cross-compiled release binaries ──────────────────────────
+# Note: CGo (-tags whisper) does not support cross-compilation.
+# Release binaries are built without whisper-native.
 
-## release: 为所有目标平台编译发布包
+## release: build release binaries for all target platforms
 release: release-linux-amd64 release-linux-arm64 \
          release-darwin-amd64 release-darwin-arm64 \
          release-windows-amd64
@@ -57,6 +58,6 @@ release-windows-amd64:
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
 	go build $(LDFLAGS) -o $(DIST)/$(BIN)-windows-amd64.exe $(PKG)
 
-## help: 显示此帮助
+## help: show available targets
 help:
 	@grep -E '^##' Makefile | sed 's/## /  /'

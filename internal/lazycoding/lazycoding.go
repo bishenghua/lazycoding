@@ -188,7 +188,7 @@ func (lc *Lazycoding) handleMessage(ctx context.Context, ev channel.InboundEvent
 
 	// For voice messages, echo the recognised text so the user can verify it.
 	if ev.IsVoice {
-		lc.ch.SendText(ctx, ev.ConversationID, "🎤 <i>识别文字：</i> "+tgrender.EscapeHTML(ev.Text)) //nolint:errcheck
+		lc.ch.SendText(ctx, ev.ConversationID, "🎤 <i>Transcribed:</i> "+tgrender.EscapeHTML(ev.Text)) //nolint:errcheck
 	}
 
 	lc.ch.SendTyping(ctx, ev.ConversationID) //nolint:errcheck
@@ -469,7 +469,7 @@ func (lc *Lazycoding) handleCallback(ctx context.Context, ev channel.InboundEven
 	switch data {
 	case "cancel":
 		if lc.cancelConversation(convID) {
-			lc.ch.SendText(ctx, convID, "⏹ 已取消") //nolint:errcheck
+			lc.ch.SendText(ctx, convID, "⏹ Cancelled.") //nolint:errcheck
 		}
 	default:
 		// Treat button data as a text message sent by the user (e.g. "yes", "no").
@@ -489,22 +489,22 @@ func (lc *Lazycoding) handleCommand(ctx context.Context, ev channel.InboundEvent
 	case "start":
 		workDir := lc.cfg.WorkDirFor(convID)
 		if workDir == "" {
-			workDir = "(未配置，使用启动目录)"
+			workDir = "(not configured, using launch directory)"
 		}
-		msg := "<b>lazycoding</b> 已就绪 🛋️\n\n" +
-			"支持的输入方式：\n" +
-			"• 文字消息 → Claude\n" +
-			"• 🎤 语音消息 → 转文字 → Claude\n" +
-			"• 📎 文件/图片 → 保存到工作目录 → Claude\n\n" +
-			"发送 /help 查看全部命令\n\n" +
-			"<i>当前工作目录：</i> <code>" + tgrender.EscapeHTML(workDir) + "</code>"
+		msg := "<b>lazycoding</b> is ready 🛋️\n\n" +
+			"Supported input:\n" +
+			"• Text message → Claude\n" +
+			"• 🎤 Voice message → transcribe → Claude\n" +
+			"• 📎 File / photo → saved to work dir → Claude\n\n" +
+			"Send /help to see all commands.\n\n" +
+			"<i>Work directory:</i> <code>" + tgrender.EscapeHTML(workDir) + "</code>"
 		lc.ch.SendText(ctx, convID, msg) //nolint:errcheck
 
 	case "cancel":
 		if lc.cancelConversation(convID) {
-			lc.ch.SendText(ctx, convID, "⏹ 已取消") //nolint:errcheck
+			lc.ch.SendText(ctx, convID, "⏹ Cancelled.") //nolint:errcheck
 		} else {
-			lc.ch.SendText(ctx, convID, "没有正在运行的任务。") //nolint:errcheck
+			lc.ch.SendText(ctx, convID, "No task is currently running.") //nolint:errcheck
 		}
 
 	case "reset":
@@ -531,22 +531,22 @@ func (lc *Lazycoding) handleCommand(ctx context.Context, ev channel.InboundEvent
 
 	case "help":
 		help := "<b>lazycoding</b>\n\n" +
-			"<b>消息类型：</b>\n" +
-			"• 文字消息 → 直接发给 Claude\n" +
-			"• 语音消息 → 自动转文字后发给 Claude\n" +
-			"• 文件/图片 → 保存到工作目录，告知 Claude\n\n" +
-			"<b>命令：</b>\n" +
-			"/start      – 显示欢迎语和当前工作目录\n" +
-			"/cancel     – 停止当前任务（保留会话）\n" +
-			"/reset      – 清除会话历史，重新开始\n" +
-			"/session    – 显示当前 Claude 会话 ID\n" +
-			"/workdir    – 显示当前工作目录\n" +
-			"/download &lt;路径&gt; – 从工作目录下载文件\n" +
-			"/help       – 显示此帮助"
+			"<b>Input types:</b>\n" +
+			"• Text message → sent directly to Claude\n" +
+			"• Voice message → transcribed, then sent to Claude\n" +
+			"• File / photo → saved to work dir, Claude is notified\n\n" +
+			"<b>Commands:</b>\n" +
+			"/start      – welcome message and current work directory\n" +
+			"/cancel     – stop current task (session is kept)\n" +
+			"/reset      – clear session history and start fresh\n" +
+			"/session    – show current Claude session ID\n" +
+			"/workdir    – show current work directory\n" +
+			"/download &lt;path&gt; – download a file from the work directory\n" +
+			"/help       – show this help"
 		lc.ch.SendText(ctx, convID, help) //nolint:errcheck
 
 	default:
-		lc.ch.SendText(ctx, convID, "未知命令。发送 /help 查看可用命令。") //nolint:errcheck
+		lc.ch.SendText(ctx, convID, "Unknown command. Send /help to see available commands.") //nolint:errcheck
 	}
 }
 
@@ -557,8 +557,8 @@ func (lc *Lazycoding) handleDownload(ctx context.Context, ev channel.InboundEven
 
 	if rel == "" {
 		lc.ch.SendText(ctx, convID, //nolint:errcheck
-			"用法：<code>/download &lt;文件路径&gt;</code>\n"+
-				"路径相对于工作目录，例如：\n"+
+			"Usage: <code>/download &lt;path&gt;</code>\n"+
+				"Path is relative to the work directory, e.g.:\n"+
 				"<code>/download src/main.go</code>\n"+
 				"<code>/download README.md</code>")
 		return
@@ -571,24 +571,24 @@ func (lc *Lazycoding) handleDownload(ctx context.Context, ev channel.InboundEven
 
 	absPath, err := safeJoin(workDir, rel)
 	if err != nil {
-		lc.ch.SendText(ctx, convID, "⚠️ 路径错误："+err.Error()) //nolint:errcheck
+		lc.ch.SendText(ctx, convID, "⚠️ Invalid path: "+err.Error()) //nolint:errcheck
 		return
 	}
 
 	info, err := os.Stat(absPath)
 	if err != nil {
-		lc.ch.SendText(ctx, convID, fmt.Sprintf("⚠️ 文件不存在：<code>%s</code>", tgrender.EscapeHTML(rel))) //nolint:errcheck
+		lc.ch.SendText(ctx, convID, fmt.Sprintf("⚠️ File not found: <code>%s</code>", tgrender.EscapeHTML(rel))) //nolint:errcheck
 		return
 	}
 	if info.IsDir() {
-		lc.ch.SendText(ctx, convID, fmt.Sprintf("⚠️ <code>%s</code> 是目录，请指定具体文件", tgrender.EscapeHTML(rel))) //nolint:errcheck
+		lc.ch.SendText(ctx, convID, fmt.Sprintf("⚠️ <code>%s</code> is a directory; please specify a file path", tgrender.EscapeHTML(rel))) //nolint:errcheck
 		return
 	}
 
 	slog.Info("sending document", "conversation", convID, "path", absPath)
 	if err := lc.ch.SendDocument(ctx, convID, absPath, rel); err != nil {
 		slog.Error("send document failed", "err", err)
-		lc.ch.SendText(ctx, convID, fmt.Sprintf("⚠️ 发送文件失败：%v", err)) //nolint:errcheck
+		lc.ch.SendText(ctx, convID, fmt.Sprintf("⚠️ Failed to send file: %v", err)) //nolint:errcheck
 	}
 }
 
@@ -600,5 +600,5 @@ func safeJoin(base, rel string) (string, error) {
 	if abs == cleanBase || strings.HasPrefix(abs, cleanBase+string(filepath.Separator)) {
 		return abs, nil
 	}
-	return "", fmt.Errorf("路径 %q 超出工作目录范围", rel)
+	return "", fmt.Errorf("path %q escapes the work directory", rel)
 }

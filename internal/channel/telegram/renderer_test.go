@@ -138,8 +138,8 @@ func TestTableCellDisplayWidth(t *testing.T) {
 		want int
 	}{
 		{"hello", 5},
-		{"北京", 4},   // 2 CJK chars × 2 = 4
-		{"Go语言", 6}, // 2 ASCII + 2 CJK×2 = 6
+		{"北京", 4},   // 2 CJK chars × 2 cols each = 4
+		{"Go语言", 6}, // 2 ASCII (1 col) + 2 CJK (2 cols each) = 6
 	}
 	for _, c := range cases {
 		got := cellDisplayWidth(c.s)

@@ -169,11 +169,11 @@ func (a *Adapter) handleVoice(ctx context.Context, msg *tgbotapi.Message, base c
 
 	if a.transcriber == nil {
 		a.sendMsg(chatID,
-			"⚠️ 语音识别未启用。\n"+
-				"请在 config.yaml 中配置 transcription 并重启 bot。\n\n"+
-				"推荐方案（无需安装任何程序）：\n"+
+			"⚠️ Voice transcription is not enabled.\n"+
+				"Set transcription.enabled: true in config.yaml and restart the bot.\n\n"+
+				"Recommended (no install required):\n"+
 				"  backend: groq\n"+
-				"  groq.api_key: <从 console.groq.com 免费获取>")
+				"  groq.api_key: <get a free key at console.groq.com>")
 		return channel.InboundEvent{}, false
 	}
 
@@ -183,7 +183,7 @@ func (a *Adapter) handleVoice(ctx context.Context, msg *tgbotapi.Message, base c
 	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("lc-voice-%d.ogg", time.Now().UnixNano()))
 	if err := a.downloadFile(msg.Voice.FileID, tmpFile); err != nil {
 		slog.Error("voice download failed", "err", err)
-		a.sendMsg(chatID, fmt.Sprintf("⚠️ 语音下载失败：%v", err))
+		a.sendMsg(chatID, fmt.Sprintf("⚠️ Voice download failed: %v", err))
 		return channel.InboundEvent{}, false
 	}
 	defer os.Remove(tmpFile)
@@ -191,7 +191,7 @@ func (a *Adapter) handleVoice(ctx context.Context, msg *tgbotapi.Message, base c
 	text, err := a.transcriber.Transcribe(ctx, tmpFile)
 	if err != nil {
 		slog.Error("transcription failed", "err", err)
-		a.sendMsg(chatID, fmt.Sprintf("⚠️ 语音识别失败：%v", err))
+		a.sendMsg(chatID, fmt.Sprintf("⚠️ Transcription failed: %v", err))
 		return channel.InboundEvent{}, false
 	}
 
@@ -218,7 +218,7 @@ func (a *Adapter) handleDocument(ctx context.Context, msg *tgbotapi.Message, bas
 	a.sendTypingRaw(chatID)
 	if err := a.downloadFile(doc.FileID, destPath); err != nil {
 		slog.Error("document download failed", "err", err)
-		a.sendMsg(chatID, fmt.Sprintf("⚠️ 文件下载失败：%v", err))
+		a.sendMsg(chatID, fmt.Sprintf("⚠️ File download failed: %v", err))
 		return channel.InboundEvent{}, false
 	}
 
@@ -246,7 +246,7 @@ func (a *Adapter) handlePhoto(ctx context.Context, msg *tgbotapi.Message, base c
 	a.sendTypingRaw(chatID)
 	if err := a.downloadFile(largest.FileID, destPath); err != nil {
 		slog.Error("photo download failed", "err", err)
-		a.sendMsg(chatID, fmt.Sprintf("⚠️ 图片下载失败：%v", err))
+		a.sendMsg(chatID, fmt.Sprintf("⚠️ Photo download failed: %v", err))
 		return channel.InboundEvent{}, false
 	}
 
@@ -450,7 +450,7 @@ func sanitizeFilename(name string) string {
 
 // buildUploadPrompt constructs the text sent to Claude after a file is saved.
 func buildUploadPrompt(filename, caption string) string {
-	s := fmt.Sprintf("[文件已保存到工作目录: %s]", filename)
+	s := fmt.Sprintf("[File saved to work directory: %s]", filename)
 	if caption != "" {
 		s += "\n" + caption
 	}
