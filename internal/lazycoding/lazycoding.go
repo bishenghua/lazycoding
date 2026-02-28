@@ -70,6 +70,18 @@ func New(ch channel.Channel, ag agent.Agent, store session.Store, cfg *config.Co
 	}
 }
 
+// sessionKey returns the key used for both the pending-request map and the
+// session store.  When a work directory is configured for the conversation, the
+// directory path is used so that multiple conversations pointing at the same
+// project share one Claude session (and are serialised against each other).
+// Falls back to the conversation ID when no work directory is set.
+func (lc *Lazycoding) sessionKey(convID string) string {
+	if d := lc.cfg.WorkDirFor(convID); d != "" {
+		return d
+	}
+	return convID
+}
+
 // Run starts the event loop and blocks until ctx is cancelled.
 func (lc *Lazycoding) Run(ctx context.Context) error {
 	events := lc.ch.Events(ctx)
@@ -94,44 +106,46 @@ func (lc *Lazycoding) Run(ctx context.Context) error {
 }
 
 // dispatch either starts a new Claude request or queues the event if one is
-// already running for this conversation.
+// already running for the same session key (work directory or conversation).
 func (lc *Lazycoding) dispatch(ev channel.InboundEvent) {
-	convID := ev.ConversationID
+	key := lc.sessionKey(ev.ConversationID)
 
 	lc.pendingMu.Lock()
-	if old, ok := lc.pending[convID]; ok {
-		// Claude is already running for this conversation – queue the message.
+	if old, ok := lc.pending[key]; ok {
+		// Claude is already running for this session key – queue the message.
 		old.mu.Lock()
 		old.queue = append(old.queue, ev)
 		old.mu.Unlock()
 		lc.pendingMu.Unlock()
-		slog.Debug("message queued", "conversation", convID, "text_len", len(ev.Text))
-		go lc.ch.SendText(context.Background(), convID, "⏳ Queued — will run after the current task.") //nolint:errcheck
+		slog.Debug("message queued", "key", key, "conversation", ev.ConversationID, "text_len", len(ev.Text))
+		go lc.ch.SendText(context.Background(), ev.ConversationID, "⏳ Queued — will run after the current task.") //nolint:errcheck
 		return
 	}
 
-	lc.startRequest(convID, ev)
+	lc.startRequest(ev)
 	lc.pendingMu.Unlock()
 }
 
 // startRequest creates a new pendingState and launches the processing goroutine.
 // Must be called with pendingMu held.
-func (lc *Lazycoding) startRequest(convID string, ev channel.InboundEvent) {
+func (lc *Lazycoding) startRequest(ev channel.InboundEvent) {
+	key := lc.sessionKey(ev.ConversationID)
 	timeout := time.Duration(lc.cfg.Claude.TimeoutSec) * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	done := make(chan struct{})
 
 	state := &pendingState{cancel: cancel, done: done}
-	lc.pending[convID] = state
+	lc.pending[key] = state
 
 	// Keep the Telegram "typing…" indicator alive for the duration of the request.
+	// SendTyping goes to the conversation that triggered this particular request.
 	go func() {
 		ticker := time.NewTicker(4 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				lc.ch.SendTyping(context.Background(), convID) //nolint:errcheck
+				lc.ch.SendTyping(context.Background(), ev.ConversationID) //nolint:errcheck
 			case <-done:
 				return
 			case <-ctx.Done():
@@ -147,13 +161,13 @@ func (lc *Lazycoding) startRequest(convID string, ev channel.InboundEvent) {
 
 			// After finishing, process the next queued message (if any).
 			lc.pendingMu.Lock()
-			cur, ok := lc.pending[convID]
+			cur, ok := lc.pending[key]
 			if !ok || cur.done != done {
 				// Another request replaced ours; nothing to do.
 				lc.pendingMu.Unlock()
 				return
 			}
-			delete(lc.pending, convID)
+			delete(lc.pending, key)
 
 			cur.mu.Lock()
 			queue := cur.queue
@@ -162,10 +176,10 @@ func (lc *Lazycoding) startRequest(convID string, ev channel.InboundEvent) {
 
 			if len(queue) > 0 {
 				// Start next queued item without releasing the lock gap.
-				lc.startRequest(convID, queue[0])
+				lc.startRequest(queue[0])
 				// If more than one queued, re-append the remainder.
 				if len(queue) > 1 {
-					next := lc.pending[convID]
+					next := lc.pending[key]
 					next.mu.Lock()
 					next.queue = append(queue[1:], next.queue...)
 					next.mu.Unlock()
@@ -180,9 +194,10 @@ func (lc *Lazycoding) startRequest(convID string, ev channel.InboundEvent) {
 // cancelConversation cancels any in-flight request and clears the queue.
 // Returns true if there was something to cancel.
 func (lc *Lazycoding) cancelConversation(convID string) bool {
+	key := lc.sessionKey(convID)
 	lc.pendingMu.Lock()
 	defer lc.pendingMu.Unlock()
-	state, ok := lc.pending[convID]
+	state, ok := lc.pending[key]
 	if !ok {
 		return false
 	}
@@ -190,7 +205,7 @@ func (lc *Lazycoding) cancelConversation(convID string) bool {
 	state.queue = nil
 	state.mu.Unlock()
 	state.cancel()
-	delete(lc.pending, convID)
+	delete(lc.pending, key)
 	return true
 }
 
@@ -214,9 +229,12 @@ func (lc *Lazycoding) handleMessage(ctx context.Context, ev channel.InboundEvent
 	workDir := lc.cfg.WorkDirFor(ev.ConversationID)
 	extraFlags := lc.cfg.ExtraFlagsFor(ev.ConversationID)
 
-	// Look up the ongoing Claude session for this conversation.
+	// Look up the ongoing Claude session, keyed by work directory (or conversation
+	// ID as fallback).  This ensures all conversations pointing at the same
+	// project directory share a single Claude session.
+	sessKey := lc.sessionKey(ev.ConversationID)
 	var claudeSessionID string
-	if sess, ok := lc.store.Get(ev.ConversationID); ok {
+	if sess, ok := lc.store.Get(sessKey); ok {
 		claudeSessionID = sess.ClaudeSessionID
 	}
 
@@ -447,11 +465,13 @@ func (lc *Lazycoding) consumeStream(
 	}
 
 	if newSessionID != "" {
-		lc.store.Set(ev.ConversationID, session.Session{
+		sk := lc.sessionKey(ev.ConversationID)
+		lc.store.Set(sk, session.Session{
 			ClaudeSessionID: newSessionID,
 			LastUsed:        time.Now(),
 		})
 		slog.Info("session saved",
+			"key", sk,
 			"conversation", ev.ConversationID,
 			"session", newSessionID,
 		)
@@ -562,12 +582,12 @@ func (lc *Lazycoding) handleCommand(ctx context.Context, ev channel.InboundEvent
 		}
 
 	case "reset":
-		lc.store.Delete(convID)
+		lc.store.Delete(lc.sessionKey(convID))
 		lc.cancelConversation(convID)
 		lc.ch.SendText(ctx, convID, "Session reset. Starting fresh.") //nolint:errcheck
 
 	case "session":
-		if sess, ok := lc.store.Get(convID); ok && sess.ClaudeSessionID != "" {
+		if sess, ok := lc.store.Get(lc.sessionKey(convID)); ok && sess.ClaudeSessionID != "" {
 			lc.ch.SendText(ctx, convID, "Current session ID: <code>"+tgrender.EscapeHTML(sess.ClaudeSessionID)+"</code>") //nolint:errcheck
 		} else {
 			lc.ch.SendText(ctx, convID, "No active session yet.") //nolint:errcheck
