@@ -106,6 +106,7 @@ func (lc *Lazycoding) dispatch(ev channel.InboundEvent) {
 		old.mu.Unlock()
 		lc.pendingMu.Unlock()
 		slog.Debug("message queued", "conversation", convID, "text_len", len(ev.Text))
+		go lc.ch.SendText(context.Background(), convID, "⏳ Queued — will run after the current task.") //nolint:errcheck
 		return
 	}
 
@@ -122,6 +123,22 @@ func (lc *Lazycoding) startRequest(convID string, ev channel.InboundEvent) {
 
 	state := &pendingState{cancel: cancel, done: done}
 	lc.pending[convID] = state
+
+	// Keep the Telegram "typing…" indicator alive for the duration of the request.
+	go func() {
+		ticker := time.NewTicker(4 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				lc.ch.SendTyping(context.Background(), convID) //nolint:errcheck
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	go func() {
 		defer func() {
@@ -253,6 +270,17 @@ type toolEntry struct {
 	output string // truncated tool result; empty = not yet received
 }
 
+// isThinkingSignatureError reports whether err is the "Invalid 'signature' in
+// 'thinking' block" error that Claude returns when a resumed session contains
+// expired extended-thinking signatures.
+func isThinkingSignatureError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "signature") && strings.Contains(msg, "thinking")
+}
+
 // consumeStream reads agent events and updates the placeholder message in place.
 // Returns the final text produced by Claude (for quick-reply detection).
 func (lc *Lazycoding) consumeStream(
@@ -368,8 +396,30 @@ func (lc *Lazycoding) consumeStream(
 			if textBuf.Len() == 0 && agEv.Text != "" {
 				textBuf.WriteString(agEv.Text)
 			}
-			doFlush()
-			handle.Seal()
+			// If the combined tools+text content would exceed Telegram's limit,
+			// keep the placeholder for the tool summary and send the response
+			// text as one or more new messages so nothing gets truncated.
+			finalContent := render()
+			if utf8.RuneCountInString(finalContent) > tgrender.MaxMessageLen && textBuf.Len() > 0 {
+				var toolsSummary strings.Builder
+				for _, t := range tools {
+					toolsSummary.WriteString(t.line)
+					toolsSummary.WriteString("\n")
+				}
+				summary := strings.TrimRight(toolsSummary.String(), "\n")
+				if summary == "" {
+					summary = "<i>(done)</i>"
+				}
+				lc.ch.UpdateText(ctx, handle, summary) //nolint:errcheck
+				handle.Seal()
+				htmlText := tgrender.MarkdownToTelegramHTML(textBuf.String())
+				for _, part := range tgrender.Split(htmlText) {
+					lc.ch.SendText(ctx, ev.ConversationID, part) //nolint:errcheck
+				}
+			} else {
+				doFlush()
+				handle.Seal()
+			}
 
 		case agent.EventKindError:
 			slog.Error("agent error", "conversation", ev.ConversationID, "user", ev.UserKey, "err", agEv.Err)
@@ -378,7 +428,11 @@ func (lc *Lazycoding) consumeStream(
 			}
 			doFlush()
 			handle.Seal()
-			lc.ch.SendText(ctx, ev.ConversationID, fmt.Sprintf("⚠️ Error: %v", agEv.Err)) //nolint:errcheck
+			msg := fmt.Sprintf("⚠️ Error: %v", agEv.Err)
+			if isThinkingSignatureError(agEv.Err) {
+				msg = "⚠️ Session contains expired thinking-block signatures. Please send /reset to start a fresh session."
+			}
+			lc.ch.SendText(ctx, ev.ConversationID, msg) //nolint:errcheck
 		}
 	}
 
