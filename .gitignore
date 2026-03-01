@@ -29,3 +29,4 @@ project/
 *.test
 *.out
 coverage.html
+.worktrees/
