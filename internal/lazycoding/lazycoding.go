@@ -85,6 +85,9 @@ type Lazycoding struct {
 
 	pendingMu sync.Mutex
 	pending   map[string]*pendingState // key = ConversationID
+
+	cwdMu sync.RWMutex
+	cwd   map[string]string // key = ConversationID
 }
 
 // pendingState tracks one in-flight Claude request and its message queue.
@@ -104,7 +107,20 @@ func New(ch channel.Channel, ag agent.Agent, store session.Store, cfg *config.Co
 		store:   store,
 		cfg:     cfg,
 		pending: make(map[string]*pendingState),
+		cwd:     make(map[string]string),
 	}
+}
+
+// currentDir returns the active directory for the conversation.
+// If not set, it falls back to the configured work directory.
+func (lc *Lazycoding) currentDir(convID string) string {
+	lc.cwdMu.RLock()
+	dir, ok := lc.cwd[convID]
+	lc.cwdMu.RUnlock()
+	if ok {
+		return dir
+	}
+	return lc.cfg.WorkDirFor(convID)
 }
 
 // sessionKey returns the key used for both the pending-request map and the
