@@ -747,6 +747,15 @@ func (lc *Lazycoding) handleCommand(ctx context.Context, ev channel.InboundEvent
 		}
 		lc.ch.SendText(ctx, convID, "Work dir: <code>"+tgrender.EscapeHTML(workDir)+"</code>") //nolint:errcheck
 
+	case "ls":
+		lc.handleLS(ctx, ev)
+
+	case "tree":
+		lc.handleTree(ctx, ev)
+
+	case "cat":
+		lc.handleCat(ctx, ev)
+
 	case "download":
 		lc.handleDownload(ctx, ev)
 
@@ -764,9 +773,13 @@ func (lc *Lazycoding) handleCommand(ctx context.Context, ev channel.InboundEvent
 			"/session             – show current Claude session ID\n" +
 			"/model [name]        – show or switch the Claude model\n" +
 			"/cost                – show token usage and estimated cost\n\n" +
+			"<b>Filesystem commands:</b>\n" +
+			"/ls [path]           – list directory contents\n" +
+			"/tree [path]         – show directory tree (depth 3)\n" +
+			"/cat &lt;path&gt;     – view file contents\n" +
+			"/download &lt;path&gt; – download a file from the work directory\n\n" +
 			"<b>Info commands:</b>\n" +
 			"/workdir             – show current work directory\n" +
-			"/download &lt;path&gt; – download a file from the work directory\n" +
 			"/start               – welcome message\n" +
 			"/help                – show this help"
 		lc.ch.SendText(ctx, convID, help) //nolint:errcheck
@@ -827,4 +840,236 @@ func safeJoin(base, rel string) (string, error) {
 		return abs, nil
 	}
 	return "", fmt.Errorf("path %q escapes the work directory", rel)
+}
+
+// handleLS lists directory contents (like ls -la).
+func (lc *Lazycoding) handleLS(ctx context.Context, ev channel.InboundEvent) {
+	convID := ev.ConversationID
+	workDir := lc.cfg.WorkDirFor(convID)
+	if workDir == "" {
+		workDir = "."
+	}
+
+	rel := strings.TrimSpace(ev.CommandArgs)
+	target := workDir
+	if rel != "" {
+		var err error
+		target, err = safeJoin(workDir, rel)
+		if err != nil {
+			lc.ch.SendText(ctx, convID, "⚠️ Invalid path: "+err.Error()) //nolint:errcheck
+			return
+		}
+	}
+
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		lc.ch.SendText(ctx, convID, fmt.Sprintf("⚠️ Cannot read directory: %v", err)) //nolint:errcheck
+		return
+	}
+
+	displayPath := "."
+	if rel != "" {
+		displayPath = rel
+	}
+
+	var sb strings.Builder
+	sb.WriteString("<code>")
+	sb.WriteString(tgrender.EscapeHTML(displayPath))
+	sb.WriteString("/</code>\n<pre>")
+
+	if len(entries) == 0 {
+		sb.WriteString("(empty)")
+	} else {
+		for _, e := range entries {
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			name := e.Name()
+			if e.IsDir() {
+				name += "/"
+			}
+			sb.WriteString(fmt.Sprintf("%-10s %6s %s  %s\n",
+				info.Mode().String(),
+				formatFileSize(info.Size()),
+				info.ModTime().Format("Jan 02 15:04"),
+				tgrender.EscapeHTML(name),
+			))
+		}
+	}
+	sb.WriteString("</pre>")
+	lc.ch.SendText(ctx, convID, sb.String()) //nolint:errcheck
+}
+
+// handleTree shows a directory tree up to 3 levels deep.
+func (lc *Lazycoding) handleTree(ctx context.Context, ev channel.InboundEvent) {
+	convID := ev.ConversationID
+	workDir := lc.cfg.WorkDirFor(convID)
+	if workDir == "" {
+		workDir = "."
+	}
+
+	rel := strings.TrimSpace(ev.CommandArgs)
+	target := workDir
+	if rel != "" {
+		var err error
+		target, err = safeJoin(workDir, rel)
+		if err != nil {
+			lc.ch.SendText(ctx, convID, "⚠️ Invalid path: "+err.Error()) //nolint:errcheck
+			return
+		}
+	}
+
+	const maxDepth = 3
+	const maxEntries = 150
+
+	// skipDirs contains directory names that are typically large and uninteresting.
+	skipDirs := map[string]bool{
+		".git": true, "node_modules": true, "vendor": true,
+		".cache": true, "__pycache__": true, ".next": true,
+	}
+
+	count := 0
+	var sb strings.Builder
+
+	var walk func(dir, prefix string, depth int)
+	walk = func(dir, prefix string, depth int) {
+		if depth > maxDepth || count >= maxEntries {
+			return
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for i, e := range entries {
+			if count >= maxEntries {
+				sb.WriteString(prefix + "…\n")
+				return
+			}
+			isLast := i == len(entries)-1
+			connector := "├── "
+			childPrefix := prefix + "│   "
+			if isLast {
+				connector = "└── "
+				childPrefix = prefix + "    "
+			}
+			name := e.Name()
+			if e.IsDir() {
+				if skipDirs[name] {
+					sb.WriteString(prefix + connector + name + "/  (skipped)\n")
+					count++
+					continue
+				}
+				sb.WriteString(prefix + connector + name + "/\n")
+				count++
+				if depth < maxDepth {
+					walk(filepath.Join(dir, name), childPrefix, depth+1)
+				}
+			} else {
+				sb.WriteString(prefix + connector + name + "\n")
+				count++
+			}
+		}
+	}
+
+	displayPath := "."
+	if rel != "" {
+		displayPath = rel
+	}
+	sb.WriteString(displayPath + "\n")
+	walk(target, "", 0)
+	if count >= maxEntries {
+		sb.WriteString("…(output truncated at " + fmt.Sprint(maxEntries) + " entries)\n")
+	}
+
+	lc.ch.SendText(ctx, convID, "<pre>"+tgrender.EscapeHTML(sb.String())+"</pre>") //nolint:errcheck
+}
+
+// handleCat displays the contents of a file.
+func (lc *Lazycoding) handleCat(ctx context.Context, ev channel.InboundEvent) {
+	convID := ev.ConversationID
+	rel := strings.TrimSpace(ev.CommandArgs)
+
+	if rel == "" {
+		lc.ch.SendText(ctx, convID, //nolint:errcheck
+			"Usage: <code>/cat &lt;path&gt;</code>\n"+
+				"Example: <code>/cat src/main.go</code>")
+		return
+	}
+
+	workDir := lc.cfg.WorkDirFor(convID)
+	if workDir == "" {
+		workDir = "."
+	}
+
+	absPath, err := safeJoin(workDir, rel)
+	if err != nil {
+		lc.ch.SendText(ctx, convID, "⚠️ Invalid path: "+err.Error()) //nolint:errcheck
+		return
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		lc.ch.SendText(ctx, convID, fmt.Sprintf("⚠️ Not found: <code>%s</code>", tgrender.EscapeHTML(rel))) //nolint:errcheck
+		return
+	}
+	if info.IsDir() {
+		lc.ch.SendText(ctx, convID, fmt.Sprintf("⚠️ <code>%s</code> is a directory — use /ls or /tree.", tgrender.EscapeHTML(rel))) //nolint:errcheck
+		return
+	}
+
+	const maxLines = 200
+	const maxBytes = 8000
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		lc.ch.SendText(ctx, convID, fmt.Sprintf("⚠️ Cannot read file: %v", err)) //nolint:errcheck
+		return
+	}
+
+	content := string(data)
+	truncated := false
+
+	lines := strings.Split(content, "\n")
+	if len(lines) > maxLines {
+		lines = lines[:maxLines]
+		content = strings.Join(lines, "\n")
+		truncated = true
+	}
+	if len(content) > maxBytes {
+		content = safeSlice(content, maxBytes)
+		truncated = true
+	}
+
+	escaped := tgrender.EscapeHTML(content)
+	footer := ""
+	if truncated {
+		footer = "\n<i>(truncated)</i>"
+	}
+	msg := fmt.Sprintf("<code>%s</code>\n<pre>%s</pre>%s",
+		tgrender.EscapeHTML(rel), escaped, footer)
+
+	// Safety net: if still too long, trim the escaped content further.
+	if utf8.RuneCountInString(msg) > tgrender.MaxMessageLen {
+		limit := tgrender.MaxMessageLen - 100
+		escaped = safeSlice(escaped, limit)
+		msg = fmt.Sprintf("<code>%s</code>\n<pre>%s</pre>\n<i>(truncated)</i>",
+			tgrender.EscapeHTML(rel), escaped)
+	}
+
+	lc.ch.SendText(ctx, convID, msg) //nolint:errcheck
+}
+
+// formatFileSize converts byte count to a short human-readable string.
+func formatFileSize(n int64) string {
+	switch {
+	case n < 1024:
+		return fmt.Sprintf("%dB", n)
+	case n < 1024*1024:
+		return fmt.Sprintf("%.1fK", float64(n)/1024)
+	case n < 1024*1024*1024:
+		return fmt.Sprintf("%.1fM", float64(n)/(1024*1024))
+	default:
+		return fmt.Sprintf("%.1fG", float64(n)/(1024*1024*1024))
+	}
 }
