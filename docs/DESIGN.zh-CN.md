@@ -82,7 +82,8 @@ internal/
 
   lazycoding/
     lazycoding.go           编排层：dispatch、消息队列、consumeStream、
-                            handleCommand、handleCallback、handleDownload
+                            handleCommand、handleCallback、
+                            handleDownload、handleLS、handleTree、handleCat
     convlog.go              终端人类可读对话日志（verbose 模式）
 
 config.example.yaml         带注释的配置模板
@@ -379,6 +380,45 @@ Telegram 文件/图片更新
 事件文本即为发送给 Claude 的提示词——明确告知文件落地位置，Claude 无需额外指引即可操作。
 
 ---
+
+## 文件系统命令
+
+三个命令在 lazycoding 内部**直接执行**，不启动 Claude 子进程，响应即时。所有路径均经过 `safeJoin` 校验，必须在 `workDir` 范围内。
+
+### `/ls [路径]`
+
+```
+/ls src/
+  └─ safeJoin(workDir, "src/")
+       └─ os.ReadDir(target)
+            └─ 格式化每个条目：mode  size  mtime  name/
+                 mode   = info.Mode().String()     如 "-rw-r--r--"
+                 size   = formatFileSize(n)        如 "1.2K", "4.0M"
+                 mtime  = ModTime().Format("Jan 02 15:04")
+                 name   = 条目名称（目录加 "/"）
+            └─ SendText("<pre>…</pre>")
+```
+
+### `/tree [路径]`
+
+```
+/tree
+  └─ walk(workDir, prefix="", depth=0)
+       ├─ 最大深度：   3
+       ├─ 最大条目数： 150
+       ├─ 跳过目录：   .git, node_modules, vendor, .cache, __pycache__, .next
+       └─ SendText("<pre>…</pre>")
+```
+
+### `/cat <路径>`
+
+```
+/cat src/main.go
+  └─ safeJoin(workDir, "src/main.go")
+       └─ os.ReadFile(absPath)
+            ├─ 截断：最多 200 行 或 8000 字节（先达到的限制生效）
+            └─ SendText("<code>path</code>\n<pre>…</pre>[(truncated)])
+```
 
 ## 文件下载流水线
 

@@ -82,7 +82,8 @@ internal/
 
   lazycoding/
     lazycoding.go           orchestration: dispatch, queue, consumeStream,
-                            handleCommand, handleCallback, handleDownload
+                            handleCommand, handleCallback,
+                            handleDownload, handleLS, handleTree, handleCat
     convlog.go              human-readable conversation transcript (verbose mode)
 
 config.example.yaml         annotated configuration template
@@ -381,6 +382,45 @@ Telegram document / photo update
 The event text is the prompt sent to Claude — it tells Claude exactly where the file landed so it can act on it without any additional instruction.
 
 ---
+
+## Filesystem Commands
+
+Three commands execute shell-style filesystem operations **directly in lazycoding**, without spawning a Claude subprocess. All paths go through `safeJoin` (must stay within `workDir`).
+
+### `/ls [path]`
+
+```
+/ls src/
+  └─ safeJoin(workDir, "src/")
+       └─ os.ReadDir(target)
+            └─ format each entry: mode  size  mtime  name/
+                 mode   = info.Mode().String()     e.g. "-rw-r--r--"
+                 size   = formatFileSize(n)        e.g. "1.2K", "4.0M"
+                 mtime  = ModTime().Format("Jan 02 15:04")
+                 name   = entry name (trailing "/" for dirs)
+            └─ SendText("<pre>…</pre>")
+```
+
+### `/tree [path]`
+
+```
+/tree
+  └─ walk(workDir, prefix="", depth=0)
+       ├─ max depth:   3
+       ├─ max entries: 150
+       ├─ skip dirs:   .git, node_modules, vendor, .cache, __pycache__, .next
+       └─ SendText("<pre>…</pre>")
+```
+
+### `/cat <path>`
+
+```
+/cat src/main.go
+  └─ safeJoin(workDir, "src/main.go")
+       └─ os.ReadFile(absPath)
+            ├─ truncate at 200 lines or 8000 bytes (whichever comes first)
+            └─ SendText("<code>path</code>\n<pre>…</pre>[(truncated)])
+```
 
 ## File Download Pipeline
 

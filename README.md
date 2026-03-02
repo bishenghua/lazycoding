@@ -314,6 +314,8 @@ log:
 
 ## Commands
 
+**Session commands:**
+
 | Command | Description |
 |---------|-------------|
 | `/start` | Welcome message + current work directory |
@@ -325,7 +327,20 @@ log:
 | `/compact [instructions]` | Compress the session context to save space; optional focus hint |
 | `/model [name]` | Show the current model, or switch to a different one (e.g. `claude-opus-4-6`) |
 | `/cost` | Show cumulative token usage and estimated cost for this session |
+
+**Filesystem commands** (run directly, no Claude invocation):
+
+| Command | Description |
+|---------|-------------|
+| `/ls [path]` | List directory contents with mode, size, and modification time |
+| `/tree [path]` | Show directory tree up to 3 levels deep (skips `.git`, `node_modules`, `vendor`) |
+| `/cat <path>` | View file contents (up to 200 lines / 8 KB) |
 | `/download <path>` | Download a file from the work directory to Telegram |
+
+**Info commands:**
+
+| Command | Description |
+|---------|-------------|
 | `/help` | Show command reference |
 
 ---
