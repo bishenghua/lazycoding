@@ -14,6 +14,9 @@ import (
 type Config struct {
 	Telegram      TelegramConfig            `yaml:"telegram"`
 	Feishu        FeishuConfig              `yaml:"feishu"`
+	QQBot         QQBotConfig               `yaml:"qqbot"`
+	DingTalk      DingTalkConfig            `yaml:"dingtalk"`
+	WeWork        WeWorkConfig              `yaml:"wework"`
 	Claude        ClaudeConfig              `yaml:"claude"`
 	Channels      map[string]*ChannelConfig `yaml:"channels"` // key = chat ID string
 	Transcription TranscriptionConfig       `yaml:"transcription"`
@@ -28,6 +31,32 @@ type FeishuConfig struct {
 	UseWebhook  bool   `yaml:"use_webhook"`   // true = HTTP webhook mode (needs public IP); default false = WebSocket long connection
 	WebhookPath string `yaml:"webhook_path"`  // HTTP path, default "/feishu" (webhook mode only)
 	ListenAddr  string `yaml:"listen_addr"`   // e.g. ":8080" (webhook mode only)
+}
+
+// QQBotConfig holds QQ group bot settings.
+// The bot connects outbound via WebSocket (no public IP required).
+type QQBotConfig struct {
+	AppID        string `yaml:"app_id"`        // AppID from bots.qq.com
+	ClientSecret string `yaml:"client_secret"` // Client secret from bots.qq.com
+}
+
+// DingTalkConfig holds DingTalk (钉钉) stream bot settings.
+// Stream mode opens an outbound WebSocket — no public IP required.
+type DingTalkConfig struct {
+	AppKey    string `yaml:"app_key"`    // AppKey from open.dingtalk.com
+	AppSecret string `yaml:"app_secret"` // AppSecret from open.dingtalk.com
+}
+
+// WeWorkConfig holds WeCom (企业微信) webhook bot settings.
+// Webhook mode requires a public IP or reverse proxy.
+type WeWorkConfig struct {
+	CorpID         string `yaml:"corp_id"`          // Enterprise CorpID
+	AgentID        int    `yaml:"agent_id"`          // App Agent ID
+	AgentSecret    string `yaml:"agent_secret"`      // App Agent Secret
+	Token          string `yaml:"token"`             // Webhook token for signature verification
+	EncodingAESKey string `yaml:"encoding_aes_key"`  // 43-char base64 AES key for decryption
+	WebhookPath    string `yaml:"webhook_path"`      // HTTP path, default "/wework"
+	ListenAddr     string `yaml:"listen_addr"`       // e.g. ":8081"
 }
 
 // TelegramConfig holds Telegram-specific settings.
@@ -133,6 +162,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Feishu.ListenAddr == "" {
 		cfg.Feishu.ListenAddr = ":8080"
+	}
+	if cfg.WeWork.WebhookPath == "" {
+		cfg.WeWork.WebhookPath = "/wework"
+	}
+	if cfg.WeWork.ListenAddr == "" {
+		cfg.WeWork.ListenAddr = ":8081"
 	}
 	// Defaults for whisper-cpp sub-config.
 	if cfg.Transcription.WhisperCPP.Bin == "" {

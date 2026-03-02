@@ -65,6 +65,58 @@ telegram:
 
 
 # ─────────────────────────────────────────────────────────────
+# QQ Group Bot  (WebSocket — no public IP required)
+# ─────────────────────────────────────────────────────────────
+#
+# How to set up:
+#   1. Go to https://bots.qq.com → Create application
+#   2. Enable group bot and get AppID + ClientSecret
+#   3. Configure intent: GROUP_AND_C2C_EVENT (1<<25)
+#   4. Add the bot to a QQ group and @mention it to chat
+#
+qqbot:
+  app_id: ""          # AppID from bots.qq.com (leave empty to disable)
+  client_secret: ""   # Client Secret from bots.qq.com
+
+
+# ─────────────────────────────────────────────────────────────
+# DingTalk Stream Bot  (WebSocket — no public IP required)
+# ─────────────────────────────────────────────────────────────
+#
+# How to set up:
+#   1. Go to https://open.dingtalk.com → Create stream bot application
+#   2. Under "Development settings" → "Event subscriptions" enable stream mode
+#   3. Subscribe to: /v1.0/im/bot/messages/getAll
+#   4. Copy AppKey and AppSecret
+#   5. Add the bot to a DingTalk group and @mention it to chat
+#
+dingtalk:
+  app_key: ""         # AppKey from open.dingtalk.com (leave empty to disable)
+  app_secret: ""      # AppSecret from open.dingtalk.com
+
+
+# ─────────────────────────────────────────────────────────────
+# WeCom (企业微信) Webhook Bot  (requires public IP)
+# ─────────────────────────────────────────────────────────────
+#
+# How to set up:
+#   1. Go to https://work.weixin.qq.com/wework_admin → Applications
+#   2. Create a custom application; note CorpID and AgentID + Secret
+#   3. Under "Receive messages" → set URL to http://<host>:8081/wework
+#   4. Note the Token and EncodingAESKey
+#   5. Users must follow the app; message via the app page
+#
+wework:
+  corp_id: ""              # Enterprise CorpID (leave empty to disable)
+  agent_id: 0              # Application AgentID
+  agent_secret: ""         # Application Secret
+  token: ""                # Webhook Token (for signature verification)
+  encoding_aes_key: ""     # 43-character base64 AES key
+  webhook_path: "/wework"  # HTTP path for incoming webhooks
+  listen_addr: ":8081"     # Webhook server listen address
+
+
+# ─────────────────────────────────────────────────────────────
 # Claude CLI – global defaults
 # ─────────────────────────────────────────────────────────────
 claude:

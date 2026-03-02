@@ -2,15 +2,15 @@
 
 [English](../README.md) · [简体中文](README.zh-CN.md)
 
-**用手机通过 Telegram 或飞书操控本地 Claude Code。**
+**用手机通过 Telegram、飞书、QQ、钉钉或企业微信操控本地 Claude Code。**
 
-发一条消息，就能写代码、修 bug、管理多个项目。lazycoding 运行在你的机器上，把 Telegram 与本地 `claude` CLI 打通，每一次工具调用、每一行输出都实时回显到聊天窗口。
+发一条消息，就能写代码、修 bug、管理多个项目。lazycoding 运行在你的机器上，把聊天平台与本地 `claude` CLI 打通，每一次工具调用、每一行输出都实时回显到聊天窗口。
 
 ```
 你（随时随地，任意设备）
         │  "重构支付模块并补充测试"
         ▼
-   Telegram  ─或─  飞书（Feishu/Lark）
+   Telegram / 飞书 / QQ / 钉钉 / 企业微信
         │
         ▼
    lazycoding  ← 运行在你的开发机上
@@ -305,19 +305,84 @@ log:
 # feishu ws: connected
 ```
 
-### 飞书与 Telegram 功能对比
+---
 
-| 功能 | Telegram | 飞书 |
-|------|----------|------|
-| 需要公网 IP | ❌ 不需要 | ❌ 不需要 |
-| 语音输入 | ✅ | ✅ |
-| 文件上传到项目目录 | ✅ | ✅ |
-| 图片上传到项目目录 | ✅ | ✅ |
-| 内联取消按钮 | ✅ | ✅ |
-| 快捷回复 Yes/No 按钮 | ✅ | ✅ |
-| 消息队列 | ✅ | ✅ |
-| 流式编辑 | ✅ | ✅（互动卡片） |
-| `/download` 文件下载 | ✅ | ✅ |
+## QQ 群机器人接入
+
+QQ 群机器人通过出站 WebSocket 连接，**无需公网 IP**。
+
+1. 前往 [bots.qq.com](https://bots.qq.com) → 创建应用
+2. 开启**群机器人**功能，记录 **AppID** 和 **Client Secret**
+3. 配置 intent：`GROUP_AND_C2C_EVENT`（1 << 25）
+4. 将机器人添加到 QQ 群，`@提及` 即可对话
+
+```yaml
+qqbot:
+  app_id: "your-app-id"
+  client_secret: "your-client-secret"
+```
+
+> **说明：** QQ 机器人消息发出后无法编辑。lazycoding 收到消息后立即发送「思考中…」提示，Claude 完成后发送完整结果。
+
+---
+
+## 钉钉 Stream 机器人接入
+
+钉钉 Stream 模式通过出站 WebSocket 连接，**无需公网 IP**。
+
+1. 前往 [open.dingtalk.com](https://open.dingtalk.com) → 创建 **Stream 机器人**应用
+2. 在**事件订阅**中开启 **Stream 推送模式**
+3. 订阅话题：`/v1.0/im/bot/messages/getAll`
+4. 复制 **AppKey** 和 **AppSecret**
+5. 将机器人添加到钉钉群，`@提及` 即可对话
+
+```yaml
+dingtalk:
+  app_key: "your-app-key"
+  app_secret: "your-app-secret"
+```
+
+> **说明：** 钉钉消息发出后无法编辑，同 QQ 机器人。
+
+---
+
+## 企业微信接入
+
+企业微信使用 HTTP 回调，**需要公网 IP 或反向代理**。
+
+1. 前往[企业微信管理后台](https://work.weixin.qq.com/wework_admin) → 应用管理 → 创建自建应用
+2. 记录 **CorpID**、**AgentID** 和 **AgentSecret**
+3. 在**接收消息** → 设置 URL 为 `http://<your-host>:8081/wework`
+4. 记录 **Token** 和 **EncodingAESKey**
+
+```yaml
+wework:
+  corp_id: "your-corp-id"
+  agent_id: 1000001
+  agent_secret: "your-agent-secret"
+  token: "your-token"
+  encoding_aes_key: "your-43-char-base64-key"
+  listen_addr: ":8081"
+```
+
+> **说明：** 企业微信消息发出后无法编辑，同 QQ 和钉钉。
+
+---
+
+### 平台对比
+
+| 功能 | Telegram | 飞书 | QQ 群机器人 | 钉钉 | 企业微信 |
+|------|----------|------|------------|------|---------|
+| 需要公网 IP | ❌ 否 | ❌ 否 | ❌ 否 | ❌ 否 | ✅ 是 |
+| 连接方式 | 长轮询 | WebSocket | WebSocket | WebSocket | Webhook |
+| 语音输入 | ✅ | ✅ | ❌ | ❌ | ❌ |
+| 文件上传到项目目录 | ✅ | ✅ | ❌ | ❌ | ❌ |
+| 图片上传到项目目录 | ✅ | ✅ | ❌ | ❌ | ❌ |
+| 内联取消按钮 | ✅ | ✅ | ❌ | ❌ | ❌ |
+| 快捷回复按钮 | ✅ | ✅ | ❌ | ❌ | ❌ |
+| 消息队列 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 流式编辑 | ✅ | ✅（卡片） | ❌（完成后发送） | ❌（完成后发送） | ❌（完成后发送） |
+| `/download` | ✅ | ✅ | ❌ | ❌ | ❌ |
 
 ---
 
@@ -660,11 +725,14 @@ transcription:
 
 注意：不要同时在本地 CLI 和 Telegram 使用同一个会话，两个并发调用写入同一会话可能产生不可预期的结果。
 
-**Q: 可以用飞书代替 Telegram 吗？**
-→ 可以。在 config.yaml 中填写 `feishu.app_id` 和 `feishu.app_secret`。默认使用 WebSocket 长连接模式，无需公网 IP，和 Telegram 长轮询体验相同。lazycoding 用互动卡片代替 Telegram 的原地编辑消息实现流式输出效果。
+**Q: 可以用飞书/QQ/钉钉/企业微信代替 Telegram 吗？**
+→ 可以。在 config.yaml 中填写对应平台的配置项。除企业微信外，所有平台均使用出站 WebSocket 连接，无需公网 IP。参见上方各平台接入说明。
 
-**Q: 能同时运行 Telegram 和飞书吗？**
-→ 支持。在同一个 config.yaml 中同时填写 `feishu.app_id` 和 `telegram.token`，lazycoding 会同时启动两个 adapter，将事件汇聚到同一个处理流水线。每个对话的 session 和消息队列完全独立。
+**Q: 能同时运行多个平台吗？**
+→ 支持。在同一个 config.yaml 中同时配置多个平台，lazycoding 会同时启动所有 adapter，将事件汇聚到同一个处理流水线。每个对话的 session 和消息队列完全独立。
+
+**Q: QQ/钉钉/企业微信支持流式输出吗？**
+→ 不支持原地编辑。这些平台不支持编辑已发送的消息。lazycoding 会立即发送「思考中…」提示，等 Claude 完成后再发送完整结果。
 
 **问：收到"Session contains expired thinking-block signatures"错误**
 → 这是 Claude 扩展思考模式的会话签名过期导致的。发送 `/reset` 开启新会话即可。

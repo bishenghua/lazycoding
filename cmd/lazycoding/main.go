@@ -10,8 +10,11 @@ import (
 
 	"github.com/bishenghua/lazycoding/internal/agent/claude"
 	"github.com/bishenghua/lazycoding/internal/channel"
+	dtadapter "github.com/bishenghua/lazycoding/internal/channel/dingtalk"
 	fsadapter "github.com/bishenghua/lazycoding/internal/channel/feishu"
+	qqadapter "github.com/bishenghua/lazycoding/internal/channel/qqbot"
 	tgadapter "github.com/bishenghua/lazycoding/internal/channel/telegram"
+	wwadapter "github.com/bishenghua/lazycoding/internal/channel/wework"
 	"github.com/bishenghua/lazycoding/internal/config"
 	"github.com/bishenghua/lazycoding/internal/lazycoding"
 	"github.com/bishenghua/lazycoding/internal/session"
@@ -73,8 +76,38 @@ func main() {
 		slog.Info("telegram channel enabled")
 	}
 
+	if cfg.QQBot.AppID != "" {
+		qqCh, err := qqadapter.New(cfg)
+		if err != nil {
+			slog.Error("qqbot adapter init", "err", err)
+			os.Exit(1)
+		}
+		adapters = append(adapters, qqCh)
+		slog.Info("qqbot channel enabled")
+	}
+
+	if cfg.DingTalk.AppKey != "" {
+		dtCh, err := dtadapter.New(cfg)
+		if err != nil {
+			slog.Error("dingtalk adapter init", "err", err)
+			os.Exit(1)
+		}
+		adapters = append(adapters, dtCh)
+		slog.Info("dingtalk channel enabled")
+	}
+
+	if cfg.WeWork.CorpID != "" {
+		wwCh, err := wwadapter.New(cfg)
+		if err != nil {
+			slog.Error("wework adapter init", "err", err)
+			os.Exit(1)
+		}
+		adapters = append(adapters, wwCh)
+		slog.Info("wework channel enabled")
+	}
+
 	if len(adapters) == 0 {
-		slog.Error("no platform configured: set feishu.app_id or telegram.token in config.yaml")
+		slog.Error("no platform configured: set feishu.app_id, telegram.token, qqbot.app_id, dingtalk.app_key, or wework.corp_id in config.yaml")
 		os.Exit(1)
 	}
 

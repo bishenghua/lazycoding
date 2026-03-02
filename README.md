@@ -2,15 +2,15 @@
 
 [English](../README.md) · [简体中文](docs/README.zh-CN.md)
 
-**Control a local Claude Code session from your phone — over Telegram or Feishu (Lark).**
+**Control a local Claude Code session from your phone — over Telegram, Feishu (Lark), QQ, DingTalk, or WeCom.**
 
-Write code, fix bugs, and manage multiple projects — all by sending a message. lazycoding runs on your machine, bridges Telegram to the `claude` CLI, and streams every tool call and response back to your chat in real time.
+Write code, fix bugs, and manage multiple projects — all by sending a message. lazycoding runs on your machine, bridges your chat platform to the `claude` CLI, and streams every tool call and response back to your chat in real time.
 
 ```
 You (anywhere, any device)
         │  "refactor the auth module and add tests"
         ▼
-   Telegram  ─or─  Feishu (Lark)
+   Telegram / Feishu / QQ / DingTalk / WeCom
         │
         ▼
    lazycoding  ← runs on your dev machine
@@ -297,19 +297,84 @@ log:
 # "feishu ws: connected"
 ```
 
-### Feishu limitations vs Telegram
+---
 
-| Feature | Telegram | Feishu |
-|---------|----------|--------|
-| Public IP required | ❌ Not needed | ❌ Not needed |
-| Voice input | ✅ Supported | ✅ Supported |
-| File upload → project dir | ✅ Supported | ✅ Supported |
-| Image upload → project dir | ✅ Supported | ✅ Supported |
-| Inline cancel button | ✅ | ✅ |
-| Quick-reply Yes/No buttons | ✅ | ✅ |
-| Message queuing | ✅ | ✅ |
-| Edit-in-place streaming | ✅ | ✅ (interactive card) |
-| `/download` | ✅ | ✅ |
+## QQ Bot setup
+
+QQ group bots connect outbound via WebSocket — no public IP required.
+
+1. Go to [bots.qq.com](https://bots.qq.com) → Create application
+2. Enable **group bot** feature; note **AppID** and **Client Secret**
+3. Configure intents: `GROUP_AND_C2C_EVENT` (1 << 25)
+4. Add the bot to a QQ group; users `@mention` it to chat
+
+```yaml
+qqbot:
+  app_id: "your-app-id"
+  client_secret: "your-client-secret"
+```
+
+> **Note:** QQ bot replies cannot be edited after sending. lazycoding shows a "thinking…" message immediately, then sends the full response when Claude finishes.
+
+---
+
+## DingTalk setup
+
+DingTalk stream mode connects outbound via WebSocket — no public IP required.
+
+1. Go to [open.dingtalk.com](https://open.dingtalk.com) → Create **stream bot** application
+2. Under **Event subscriptions** → enable **Stream mode**
+3. Subscribe to topic: `/v1.0/im/bot/messages/getAll`
+4. Copy **AppKey** and **AppSecret**
+5. Add the bot to a DingTalk group; `@mention` it to chat
+
+```yaml
+dingtalk:
+  app_key: "your-app-key"
+  app_secret: "your-app-secret"
+```
+
+> **Note:** DingTalk replies cannot be edited. Same "send-on-done" pattern as QQ.
+
+---
+
+## WeCom (企业微信) setup
+
+WeCom uses HTTP webhook callbacks — **requires a public IP or reverse proxy**.
+
+1. Go to [work.weixin.qq.com](https://work.weixin.qq.com/wework_admin) → Applications → Create custom app
+2. Note **CorpID**, **AgentID**, and **Agent Secret**
+3. Under **Receive messages** → set URL to `http://<your-host>:8081/wework`
+4. Note the **Token** and **EncodingAESKey**
+
+```yaml
+wework:
+  corp_id: "your-corp-id"
+  agent_id: 1000001
+  agent_secret: "your-agent-secret"
+  token: "your-token"
+  encoding_aes_key: "your-43-char-base64-key"
+  listen_addr: ":8081"
+```
+
+> **Note:** WeCom replies cannot be edited. Same "send-on-done" pattern as QQ/DingTalk.
+
+---
+
+### Platform comparison
+
+| Feature | Telegram | Feishu | QQ Bot | DingTalk | WeCom |
+|---------|----------|--------|--------|----------|-------|
+| Public IP required | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Yes |
+| Connection mode | Long-poll | WebSocket | WebSocket | WebSocket | Webhook |
+| Voice input | ✅ | ✅ | ❌ | ❌ | ❌ |
+| File upload → project dir | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Image upload → project dir | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Inline cancel button | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Quick-reply buttons | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Message queuing | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Edit-in-place streaming | ✅ | ✅ (card) | ❌ (send-on-done) | ❌ (send-on-done) | ❌ (send-on-done) |
+| `/download` | ✅ | ✅ | ❌ | ❌ | ❌ |
 
 ---
 
@@ -662,11 +727,14 @@ Note: do not use both simultaneously (local CLI + Telegram) for the same session
 **Q: Can I check what Claude is doing mid-task?**
 → Yes — send `/status` at any time. The bot replies with the current tool call list and any text Claude has produced so far, identical to what is shown in the live placeholder message.
 
-**Q: Can I use Feishu instead of Telegram?**
-→ Yes. Set `feishu.app_id` and `feishu.app_secret` in config.yaml. By default lazycoding uses WebSocket long-connection mode (no public IP needed). The bot uses interactive cards for streaming output instead of Telegram's edit-in-place messages.
+**Q: Can I use Feishu/QQ/DingTalk/WeCom instead of Telegram?**
+→ Yes. Configure the relevant section in config.yaml. All platforms (except WeCom) use outbound WebSocket connections — no public IP needed. See the setup sections above for each platform.
 
-**Q: Can I run both Telegram and Feishu at the same time?**
-→ Yes. Set both `feishu.app_id` and `telegram.token` in the same config file. lazycoding starts both adapters simultaneously and fans their events into one pipeline. Sessions and queuing are fully independent per conversation.
+**Q: Can I run multiple platforms at the same time?**
+→ Yes. Set credentials for any combination of platforms in the same config file. lazycoding starts all configured adapters simultaneously and fans their events into one pipeline. Sessions and queuing are fully independent per conversation.
+
+**Q: Do QQ/DingTalk/WeCom support streaming output like Telegram?**
+→ Not edit-in-place streaming. These platforms don't support message editing. lazycoding sends a "Thinking…" message immediately, accumulates Claude's output, then sends the final response when done.
 
 **Q: "Session contains expired thinking-block signatures" error**
 → This happens when Claude's extended thinking session has expired signature data. Send `/reset` to start a fresh session.
