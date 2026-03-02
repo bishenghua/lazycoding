@@ -7,12 +7,38 @@
 #   # Edit config.yaml: fill in your token and paths
 #   ./lazycoding config.yaml
 #
-# Core concept: each Telegram conversation (DM / group / channel) can be
+# Core concept: each conversation (Telegram DM/group or Feishu chat) can be
 # mapped to a local working directory.  Messages sent to that conversation
 # are executed by Claude inside the corresponding directory.
+#
+# Platform selection: lazycoding picks the adapter automatically.
+#   • Set feishu.app_id  → Feishu webhook mode (HTTP server)
+#   • Set telegram.token → Telegram long-polling mode
+#   • Only one platform can be active per process.
 
 # ─────────────────────────────────────────────────────────────
-# Telegram
+# Feishu / Lark  (comment out if using Telegram)
+# ─────────────────────────────────────────────────────────────
+#
+# How to set up:
+#   1. Go to open.feishu.cn/app → Create custom app
+#   2. Copy App ID and App Secret from "Credentials & Basic Info"
+#   3. Under "Event Subscriptions" set request URL to:
+#        http://<your-host>:8080/feishu
+#      Add events: im.message.receive_v1, im.message.action.trigger_v1
+#   4. Under "Permissions" enable: im:message, im:message.group_at_msg
+#   5. Under "Bot" tab, enable the bot feature
+#
+feishu:
+  app_id: ""          # e.g. "cli_xxxxxxxxxxxxxxxxxx"  (leave empty to disable)
+  app_secret: ""      # App Secret from the Feishu developer console
+  encrypt_key: ""     # Optional: AES event encryption key (leave empty if unused)
+  webhook_path: "/feishu"   # HTTP path for incoming webhooks
+  listen_addr: ":8080"      # Address for the webhook HTTP server
+
+
+# ─────────────────────────────────────────────────────────────
+# Telegram  (comment out if using Feishu)
 # ─────────────────────────────────────────────────────────────
 telegram:
   # Bot token from @BotFather (required).
