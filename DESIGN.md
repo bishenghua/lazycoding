@@ -625,6 +625,7 @@ Session{
 This means:
 - **Restart lazycoding** → sessions reload → Claude context is preserved.
 - **`/reset`** → `store.Delete(sessionKey)` → Claude starts a fresh session.
+- **`/resume <id>`** → `store.Set(sessionKey, session{ClaudeSessionID: id})` → Claude resumes the specified session on the next request (preserves other session fields such as `ModelOverride`).
 - **Session file manually deleted** → all conversations start fresh (no harm done).
 - **`/model <name>`** → `session.ModelOverride = name` → applied as `--model` flag on every subsequent request (replaces any existing `--model` in config `extra_flags`)
 - **`/cost`** → reads `TotalCostUSD`, `TotalInputTokens`, `TotalOutputTokens` from session

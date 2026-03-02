@@ -395,6 +395,7 @@ wework:
 | `/start` | 欢迎消息 + 当前工作目录 |
 | `/workdir` | 显示本会话绑定的工作目录（同时显示 chat\_id） |
 | `/session` | 显示当前 Claude 会话 ID（用于调试） |
+| `/resume <id>` | 恢复指定 ID 的 Claude 会话 |
 | `/status` | 显示 Claude 正在执行的内容——已调用的工具和已输出的文字 |
 | `/cancel` | 停止当前任务——**会话历史保留** |
 | `/reset` | 停止当前任务 + **清除会话历史**，重新开始 |
@@ -724,6 +725,14 @@ transcription:
 如果 lazycoding 已有 stored session，优先使用自己的。运行 `/reset` 清除后，下次会自动发现最新的本地会话。
 
 注意：不要同时在本地 CLI 和 Telegram 使用同一个会话，两个并发调用写入同一会话可能产生不可预期的结果。
+
+**Q：/reset 后怎么回到之前的会话？**
+→ 用 `/resume <session_id>`。会话 ID 是 UUID，可在 reset 前通过 `/session` 查看。设置后下一条消息会从原来的上下文继续。
+```
+/session              → 显示：abc-123-...
+/reset                → 手滑了，session 被清了
+/resume abc-123-...   → 已恢复，下条消息从原处继续
+```
 
 **Q: 可以用飞书/QQ/钉钉/企业微信代替 Telegram 吗？**
 → 可以。在 config.yaml 中填写对应平台的配置项。除企业微信外，所有平台均使用出站 WebSocket 连接，无需公网 IP。参见上方各平台接入说明。

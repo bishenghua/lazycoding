@@ -387,6 +387,7 @@ wework:
 | `/start` | Welcome message + current work directory |
 | `/workdir` | Show the work directory bound to this conversation (also shows chat\_id) |
 | `/session` | Show the current Claude session ID (for debugging) |
+| `/resume <id>` | Resume a specific Claude session by ID |
 | `/status` | Show what Claude is doing right now — tool calls and output so far |
 | `/cancel` | Stop the current task — **session history is kept** |
 | `/reset` | Stop current task + **clear session history**, start fresh |
@@ -717,6 +718,14 @@ command:   /download src/main.go
 If lazycoding already has a stored session, that takes priority. Run `/reset` to clear it and let auto-discovery pick up the latest local session.
 
 Note: do not use both simultaneously (local CLI + Telegram) for the same session; two concurrent invocations writing to the same session can produce unpredictable results.
+
+**Q: How do I go back to a previous session after /reset?**
+→ Use `/resume <session_id>`. Session IDs are UUIDs visible via `/session` before you reset. Once set, Claude resumes that exact context on your next message.
+```
+/session             → shows: abc-123-...
+/reset               → oops, session cleared
+/resume abc-123-...  → restored, next message continues from where you left off
+```
 
 **Q: How do I switch Claude models mid-session?**
 → Use `/model claude-opus-4-6` (or any Claude model ID). The override is stored per session and takes effect on the next message. Use `/model` with no arguments to see the current model. `/reset` clears the override along with the session history.

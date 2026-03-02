@@ -630,6 +630,7 @@ Session{
 |------|------|
 | 重启 lazycoding | sessions 从文件加载，Claude 上下文完整保留 |
 | `/reset` | `store.Delete(sessionKey)`，Claude 开启新会话 |
+| `/resume <id>` | `store.Set(sessionKey, session{ClaudeSessionID: id})`，下次请求恢复指定 session（保留 `ModelOverride` 等其他字段） |
 | 手动删除 session 文件 | 所有对话重新开始，无害 |
 
 ### 会话 Key
