@@ -58,6 +58,8 @@ func toolColor(toolName string) string {
 		return ansiYellow
 	case "Agent":
 		return ansiCyan
+	case "opencode", "codex":
+		return ansiBrightGreen
 	default:
 		return ansiYellow
 	}
@@ -73,6 +75,26 @@ func indent(s string) string {
 	return "  " + strings.ReplaceAll(s, "\n", "\n  ")
 }
 
+// extractSubagentType tries to parse the subagent_type from a JSON tool input.
+func extractSubagentType(input string) string {
+	if input == "" {
+		return ""
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(input), &m); err != nil {
+		return ""
+	}
+	raw, ok := m["subagent_type"]
+	if !ok {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return strings.Trim(string(raw), `"`)
+	}
+	return s
+}
+
 // convLogRecv logs an incoming user message.
 func convLogRecv(convID, userKey, text string) {
 	arrow := color(ansiBold+ansiCyan, "▶")
@@ -85,7 +107,18 @@ func convLogRecv(convID, userKey, text string) {
 // Multi-line summaries (e.g. heredoc Bash commands) are printed with
 // continuation lines indented to align below the first summary line.
 func convLogTool(name, input, workDir string) {
-	label := color(ansiCyan+ansiBold, "🔧 "+name+":")
+	// Determine display name and color
+	displayName := name
+	colorName := name
+	if name == "Agent" {
+		subagentType := extractSubagentType(input)
+		if subagentType != "" {
+			displayName = "Agent (" + subagentType + ")"
+			colorName = subagentType
+		}
+	}
+
+	label := color(toolColor(colorName)+ansiBold, "🔧 "+displayName+":")
 	summary := formatToolInput(name, input, workDir)
 	if summary == "" {
 		fmt.Fprintf(os.Stderr, "%s ┌─ %s\n", ts(), label)
@@ -235,6 +268,28 @@ func formatToolInput(toolName, input, workDir string) string {
 			desc = desc[:117] + "…"
 		}
 		return desc
+
+	case "Agent":
+		subagentType := getString("subagent_type")
+		desc := getString("description")
+		if desc == "" {
+			desc = getString("prompt")
+		}
+		result := subagentType
+		if desc != "" {
+			if len(desc) > 80 {
+				desc = desc[:77] + "…"
+			}
+			if result != "" {
+				result += ": " + desc
+			} else {
+				result = desc
+			}
+		}
+		if result == "" {
+			result = "agent"
+		}
+		return result
 
 	case "AskUserQuestion":
 		raw, ok := m["questions"]
