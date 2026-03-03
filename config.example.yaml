@@ -81,6 +81,12 @@ telegram:
 #   3. Configure intent: GROUP_AND_C2C_EVENT (1<<25)
 #   4. Add the bot to a QQ group and @mention it to chat
 #
+# Supported message types:
+#   • Text messages
+#   • Voice attachments  → transcribed and forwarded (requires transcription below)
+#   • Image attachments  → saved to the conversation's work_dir
+#   • File attachments   → saved to the conversation's work_dir
+#
 qqbot:
   app_id: ""          # AppID from bots.qq.com (leave empty to disable)
   client_secret: ""   # Client Secret from bots.qq.com
@@ -97,6 +103,12 @@ qqbot:
 #   4. Copy AppKey and AppSecret
 #   5. Add the bot to a DingTalk group and @mention it to chat
 #
+# Supported message types:
+#   • Text messages
+#   • Voice / audio  → downloaded via downloadCode API, transcribed (requires transcription below)
+#   • Picture        → saved to the conversation's work_dir
+#   • File           → saved to the conversation's work_dir
+#
 dingtalk:
   app_key: ""         # AppKey from open.dingtalk.com (leave empty to disable)
   app_secret: ""      # AppSecret from open.dingtalk.com
@@ -112,6 +124,14 @@ dingtalk:
 #   3. Under "Receive messages" → set URL to http://<host>:8081/wework
 #   4. Note the Token and EncodingAESKey
 #   5. Users must follow the app; message via the app page
+#
+# Supported message types:
+#   • Text messages
+#   • Voice  → downloaded via MediaId (media/get API), transcribed;
+#              when transcription is disabled, falls back to WeCom's
+#              built-in voice recognition (<Recognition> field)
+#   • Image  → saved to the conversation's work_dir
+#   • File   → saved to the conversation's work_dir
 #
 wework:
   corp_id: ""              # Enterprise CorpID (leave empty to disable)
@@ -177,8 +197,12 @@ channels:
 
 
 # ─────────────────────────────────────────────────────────────
-# Voice transcription (optional)
+# Voice transcription (optional — applies to all platforms)
 # ─────────────────────────────────────────────────────────────
+#
+# When enabled, voice messages from Telegram, Feishu, QQ Bot, DingTalk,
+# and WeCom are all transcribed using the configured backend below.
+# (WeCom also falls back to its built-in Recognition field when disabled.)
 #
 # Four backends are supported; pick one:
 #

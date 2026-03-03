@@ -470,7 +470,17 @@ File paths are shown relative to the work directory. The same formatting is used
 
 ## Voice input
 
-Send a Telegram voice message; the bot transcribes it and forwards the text to Claude.
+Send a voice message on **any supported platform**; the bot transcribes it and forwards the text to Claude.
+
+| Platform | Voice input | Audio format | Notes |
+|----------|------------|--------------|-------|
+| Telegram | ✅ | OGG/Opus | — |
+| Feishu | ✅ | OGG | — |
+| QQ Bot | ✅ | Platform-dependent | — |
+| DingTalk | ✅ | AMR | — |
+| WeCom | ✅ | AMR | Falls back to WeCom's built-in recognition when transcription is disabled |
+
+Configure one transcription backend and it works on all platforms:
 
 | Option | Backend value | Prerequisite | Privacy |
 |--------|---------------|--------------|---------|
@@ -542,7 +552,7 @@ transcription:
 
 ## File upload
 
-Drop any file or photo into the Telegram conversation. lazycoding saves it to the project directory and tells Claude it's there.
+Drop any file or photo into the chat on **any supported platform**. lazycoding downloads it to the work directory and tells Claude it's there.
 
 ```
 You: [upload requirements.txt]
@@ -555,6 +565,14 @@ Bot: 🔧 Read: requirements.txt
 - Caption becomes the Claude prompt; you can also upload silently and ask in a follow-up message
 - Photos → `photo_YYYYMMDD_HHMMSS.jpg`
 - Directory components in filenames are stripped (path traversal prevention)
+
+| Platform | How files are transferred |
+|----------|--------------------------|
+| Telegram | Telegram Bot API file download |
+| Feishu | Feishu resource download API |
+| QQ Bot | CDN attachment URL (authenticated) |
+| DingTalk | `downloadCode` → DingTalk file download API |
+| WeCom | `MediaId` → WeCom media/get API |
 
 ---
 
