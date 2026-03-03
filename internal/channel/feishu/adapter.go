@@ -289,6 +289,28 @@ func (a *Adapter) parseMessage(ctx context.Context, raw json.RawMessage) (channe
 		return channel.InboundEvent{}, false
 	}
 
+	// Deduplicate by message_id (stable across event retries and WS reconnects).
+	//
+	// The envelope-level event_id deduplication in dispatchRaw only works when
+	// Feishu retries within the same session.  When runWebSocket reconnects and
+	// calls getWSEndpoint() for a fresh URL/session, Feishu treats the new
+	// connection as a new subscriber and replays recent messages with brand-new
+	// event_ids, bypassing the event_id check.  message_id is the stable
+	// identifier for the actual Feishu message and never changes on replay.
+	if msgID := e.Message.MessageID; msgID != "" {
+		key := "msg:" + msgID // prefix avoids collision with event_ids in the same map
+		a.seenMu.Lock()
+		_, dup := a.seen[key]
+		if !dup {
+			a.seen[key] = time.Now()
+		}
+		a.seenMu.Unlock()
+		if dup {
+			slog.Debug("feishu: duplicate message dropped", "message_id", msgID)
+			return channel.InboundEvent{}, false
+		}
+	}
+
 	base := channel.InboundEvent{
 		UserKey:        "fs:" + openID,
 		ConversationID: chatID,
