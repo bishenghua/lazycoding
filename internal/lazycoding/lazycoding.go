@@ -575,8 +575,6 @@ func (lc *Lazycoding) consumeStream(
 			existing.TotalCostUSD += newUsage.TotalCostUSD
 			existing.TotalInputTokens += newUsage.InputTokens + newUsage.CacheReadInputTokens + newUsage.CacheCreationInputTokens
 			existing.TotalOutputTokens += newUsage.OutputTokens
-			// Track last-turn total context size for /context display.
-			existing.LastContextTokens = newUsage.InputTokens + newUsage.CacheReadInputTokens + newUsage.CacheCreationInputTokens
 		}
 		lc.store.Set(sk, existing)
 	}
@@ -726,59 +724,6 @@ func (lc *Lazycoding) handleCommand(ctx context.Context, ev channel.InboundEvent
 			lc.ch.SendText(ctx, convID, msg) //nolint:errcheck
 		}
 
-	case "context":
-		const maxCtx = 200_000
-		sess, ok := lc.store.Get(lc.sessionKey(convID))
-		if !ok || sess.LastContextTokens == 0 {
-			lc.ch.SendText(ctx, convID, "No context data yet — send a message first.") //nolint:errcheck
-			return
-		}
-		used := sess.LastContextTokens
-		pct := float64(used) * 100.0 / float64(maxCtx)
-		const barLen = 30
-		filled := int(float64(barLen) * float64(used) / float64(maxCtx))
-		if filled > barLen {
-			filled = barLen
-		}
-		bar := strings.Repeat("█", filled) + strings.Repeat("░", barLen-filled)
-		model := lc.effectiveModel(convID, sess)
-		msg := fmt.Sprintf(
-			"<b>Context window</b>  ·  %s\n"+
-				"<code>[%s]</code> <b>%.1f%%</b>\n"+
-				"%s / 200k tokens used",
-			tgrender.EscapeHTML(model), bar, pct, formatTokens(used))
-		lc.ch.SendText(ctx, convID, msg) //nolint:errcheck
-
-	case "config":
-		workDir := lc.cfg.WorkDirFor(convID)
-		if workDir == "" {
-			workDir = "(launch directory)"
-		}
-		sess, _ := lc.store.Get(lc.sessionKey(convID))
-		model := lc.effectiveModel(convID, sess)
-		sessID := sess.ClaudeSessionID
-		if sessID == "" {
-			sessID = "(none)"
-		}
-		flags := lc.cfg.ExtraFlagsFor(convID)
-		flagStr := "(none)"
-		if len(flags) > 0 {
-			flagStr = strings.Join(flags, " ")
-		}
-		msg := fmt.Sprintf(
-			"<b>Configuration</b>\n"+
-				"Work dir:    <code>%s</code>\n"+
-				"Model:       <code>%s</code>\n"+
-				"Session ID:  <code>%s</code>\n"+
-				"Timeout:     <code>%ds</code>\n"+
-				"Extra flags: <code>%s</code>",
-			tgrender.EscapeHTML(workDir),
-			tgrender.EscapeHTML(model),
-			tgrender.EscapeHTML(sessID),
-			lc.cfg.Claude.TimeoutSec,
-			tgrender.EscapeHTML(flagStr))
-		lc.ch.SendText(ctx, convID, msg) //nolint:errcheck
-
 	case "cancel":
 		if lc.cancelConversation(convID) {
 			lc.ch.SendText(ctx, convID, "⏹ Cancelled.") //nolint:errcheck
@@ -856,9 +801,7 @@ func (lc *Lazycoding) handleCommand(ctx context.Context, ev channel.InboundEvent
 			"/session             – show current Claude session ID\n" +
 			"/resume &lt;id&gt;   – resume a specific Claude session by ID\n" +
 			"/model [name]        – show or switch the Claude model\n" +
-			"/usage               – show token usage and estimated cost\n" +
-			"/context             – show context window utilisation\n" +
-			"/config              – show current effective configuration\n\n" +
+			"/usage               – show token usage and estimated cost\n\n" +
 			"<b>Filesystem commands:</b>\n" +
 			"/ls [path]           – list directory contents\n" +
 			"/tree [path]         – show directory tree (depth 3)\n" +

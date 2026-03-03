@@ -17,9 +17,6 @@ type Session struct {
 	TotalCostUSD      float64   `json:"total_cost_usd,omitempty"`
 	TotalInputTokens  int       `json:"total_input_tokens,omitempty"`
 	TotalOutputTokens int       `json:"total_output_tokens,omitempty"`
-	// LastContextTokens is the total token count (input + cache) from the most
-	// recent completed turn, used to show context window utilisation.
-	LastContextTokens int `json:"last_context_tokens,omitempty"`
 }
 
 // Store is the interface for session persistence.
