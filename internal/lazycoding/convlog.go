@@ -22,6 +22,12 @@ const (
 	ansiGreen  = "\033[32m"
 	ansiYellow = "\033[33m"
 	ansiRed    = "\033[31m"
+	ansiBlue   = "\033[34m"
+	ansiMagenta = "\033[35m"
+	ansiBrightCyan = "\033[96m"
+	ansiBrightGreen = "\033[92m"
+	ansiWhite  = "\033[37m"
+	ansiBrightWhite = "\033[97m"
 )
 
 // useColor is set once at startup: true if stderr is a terminal.
@@ -35,6 +41,26 @@ func color(code, s string) string {
 		return s
 	}
 	return code + s + ansiReset
+}
+
+// toolColor returns the appropriate ANSI color code for a given tool name.
+func toolColor(toolName string) string {
+	switch toolName {
+	case "Bash":
+		return ansiBrightCyan
+	case "Read", "Write", "Edit", "NotebookEdit":
+		return ansiBlue
+	case "Glob", "Grep":
+		return ansiMagenta
+	case "WebFetch", "WebSearch":
+		return ansiBrightGreen
+	case "AskUserQuestion", "TodoWrite":
+		return ansiYellow
+	case "Agent":
+		return ansiCyan
+	default:
+		return ansiYellow
+	}
 }
 
 func ts() string {
@@ -59,16 +85,17 @@ func convLogRecv(convID, userKey, text string) {
 // Multi-line summaries (e.g. heredoc Bash commands) are printed with
 // continuation lines indented to align below the first summary line.
 func convLogTool(name, input, workDir string) {
-	label := color(ansiYellow, "🔧 "+name)
+	toolCol := toolColor(name)
+	label := color(toolCol+ansiBold, "🔧 "+name)
 	summary := formatToolInput(name, input, workDir)
 	if summary == "" {
 		fmt.Fprintf(os.Stderr, "%s   %s\n", ts(), label)
 		return
 	}
 	lines := strings.Split(strings.TrimRight(summary, "\n"), "\n")
-	fmt.Fprintf(os.Stderr, "%s   %s  %s\n", ts(), label, color(ansiGray, lines[0]))
+	fmt.Fprintf(os.Stderr, "%s   %s  %s\n", ts(), label, color(ansiWhite, lines[0]))
 	for _, line := range lines[1:] {
-		fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiGray, line))
+		fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiWhite, line))
 	}
 }
 
@@ -101,9 +128,11 @@ func convLogToolResult(result string) {
 	}
 
 	outLines := strings.Split(out, "\n")
-	fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiGray, "⎿  "+outLines[0]))
+	// Add a subtle separator before tool output
+	fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiGray, "──────"))
+	fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiWhite, "⎿  "+outLines[0]))
 	for _, line := range outLines[1:] {
-		fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiGray, "   "+line))
+		fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiWhite, "   "+line))
 	}
 }
 
