@@ -85,17 +85,22 @@ func convLogRecv(convID, userKey, text string) {
 // Multi-line summaries (e.g. heredoc Bash commands) are printed with
 // continuation lines indented to align below the first summary line.
 func convLogTool(name, input, workDir string) {
-	toolCol := toolColor(name)
-	label := color(toolCol+ansiBold, "🔧 "+name)
+	label := color(ansiCyan+ansiBold, "🔧 "+name+":")
 	summary := formatToolInput(name, input, workDir)
 	if summary == "" {
-		fmt.Fprintf(os.Stderr, "%s   %s\n", ts(), label)
+		fmt.Fprintf(os.Stderr, "%s ┌─ %s\n", ts(), label)
 		return
 	}
 	lines := strings.Split(strings.TrimRight(summary, "\n"), "\n")
-	fmt.Fprintf(os.Stderr, "%s   %s  %s\n", ts(), label, color(ansiWhite, lines[0]))
-	for _, line := range lines[1:] {
-		fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiWhite, line))
+	if len(lines) == 1 {
+		// Single line: show on same line after label
+		fmt.Fprintf(os.Stderr, "%s ┌─ %s %s\n", ts(), label, color(ansiGray, lines[0]))
+	} else {
+		// Multi-line: show label alone, then each line on its own line with pipe
+		fmt.Fprintf(os.Stderr, "%s ┌─ %s\n", ts(), label)
+		for _, line := range lines {
+			fmt.Fprintf(os.Stderr, "   │   %s\n", color(ansiGray, line))
+		}
 	}
 }
 
@@ -128,11 +133,10 @@ func convLogToolResult(result string) {
 	}
 
 	outLines := strings.Split(out, "\n")
-	// Add a blank line before tool output for visual separation
-	fmt.Fprintf(os.Stderr, "\n")
-	fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiCyan, "⎿  "+outLines[0]))
+	// Align with the tool invocation line (timestamp width + space)
+	fmt.Fprintf(os.Stderr, "         └─ %s\n", color(ansiGray, "⎿  "+outLines[0]))
 	for _, line := range outLines[1:] {
-		fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiWhite, "   "+line))
+		fmt.Fprintf(os.Stderr, "               %s\n", color(ansiGray, line))
 	}
 }
 
