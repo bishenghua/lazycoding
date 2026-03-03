@@ -93,9 +93,9 @@ func convLogTool(name, input, workDir string) {
 		return
 	}
 	lines := strings.Split(strings.TrimRight(summary, "\n"), "\n")
-	fmt.Fprintf(os.Stderr, "%s   %s  %s\n", ts(), label, color(ansiWhite, lines[0]))
+	fmt.Fprintf(os.Stderr, "%s   %s  %s\n", ts(), label, color(ansiGray, lines[0]))
 	for _, line := range lines[1:] {
-		fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiWhite, line))
+		fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiGray, line))
 	}
 }
 
@@ -128,11 +128,11 @@ func convLogToolResult(result string) {
 	}
 
 	outLines := strings.Split(out, "\n")
-	// Add a subtle separator before tool output
-	fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiGray, "──────"))
-	fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiWhite, "⎿  "+outLines[0]))
+	// Add a blank line before tool output for visual separation
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiCyan, "⎿  "+outLines[0]))
 	for _, line := range outLines[1:] {
-		fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiWhite, "   "+line))
+		fmt.Fprintf(os.Stderr, "                    %s\n", color(ansiGray, "   "+line))
 	}
 }
 
