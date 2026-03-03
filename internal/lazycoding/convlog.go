@@ -64,6 +64,14 @@ func toolColor(toolName string) string {
 		return ansiBrightGreen
 	case "codex":
 		return ansiMagenta
+	case "general-purpose":
+		return ansiCyan
+	case "Explore":
+		return ansiBrightGreen
+	case "Plan":
+		return ansiMagenta
+	case "statusline-setup":
+		return ansiYellow
 	default:
 		return ansiYellow
 	}
