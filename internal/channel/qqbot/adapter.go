@@ -194,7 +194,7 @@ func (a *Adapter) sendGroupMsg(ctx context.Context, groupOpenID, text, msgID str
 }
 
 func (a *Adapter) sendGroupMsgChunk(ctx context.Context, groupOpenID, text, msgID string) error {
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"content":  text,
 		"msg_type": 0, // 0 = text
 	}
@@ -354,7 +354,7 @@ func (a *Adapter) serveWSConn(ctx context.Context, conn *websocket.Conn, token s
 		}
 	}()
 
-	write := func(v interface{}) {
+	write := func(v any) {
 		raw, _ := json.Marshal(v)
 		select {
 		case writeCh <- raw:
@@ -390,11 +390,11 @@ func (a *Adapter) serveWSConn(ctx context.Context, conn *websocket.Conn, token s
 	identified := false
 
 	sendHeartbeat := func() {
-		var d interface{}
+		var d any
 		if lastSeq > 0 {
 			d = lastSeq
 		}
-		write(map[string]interface{}{"op": opHeartbeat, "d": d})
+		write(map[string]any{"op": opHeartbeat, "d": d})
 	}
 
 	for {
@@ -426,9 +426,9 @@ func (a *Adapter) serveWSConn(ctx context.Context, conn *websocket.Conn, token s
 					heartbeatInterval = time.Duration(hello.HeartbeatInterval) * time.Millisecond
 					heartbeatTicker.Reset(heartbeatInterval)
 				}
-				write(map[string]interface{}{
+				write(map[string]any{
 					"op": opIdentify,
-					"d": map[string]interface{}{
+					"d": map[string]any{
 						"token":   "QQBot " + token,
 						"intents": qqIntentGroup,
 						"shard":   []int{0, 1},

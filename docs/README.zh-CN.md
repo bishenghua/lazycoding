@@ -2,9 +2,9 @@
 
 [English](../README.md) · [简体中文](README.zh-CN.md)
 
-**用手机通过 Telegram、飞书、QQ、钉钉或企业微信操控本地 Claude Code。**
+**用手机通过 Telegram、飞书、QQ、钉钉或企业微信操控本地 AI 编程 Agent。**
 
-发一条消息，就能写代码、修 bug、管理多个项目。lazycoding 运行在你的机器上，把聊天平台与本地 `claude` CLI 打通，每一次工具调用、每一行输出都实时回显到聊天窗口。
+发一条消息，就能写代码、修 bug、管理多个项目。lazycoding 运行在你的机器上，把聊天平台与本地 AI 编程 Agent（Claude Code、OpenCode 或 Codex）打通，每一次工具调用、每一行输出都实时回显到聊天窗口。
 
 ```
 你（随时随地，任意设备）
@@ -14,9 +14,9 @@
         │
         ▼
    lazycoding  ← 运行在你的开发机上
-        │  claude --print --output-format stream-json
+        │  claude / opencode / codex（任选其一）
         ▼
-   Claude Code  ← 读写文件、执行命令、生成代码
+   AI 编程 Agent  ← 读写文件、执行命令、生成代码
         │
         ▼
    流式输出 → 实时回显到聊天窗口
@@ -26,20 +26,20 @@
 
 ## 为什么需要 lazycoding？
 
-**Claude Code 很强大，但它被锁在终端里。** 离开电脑就失去了控制权。
+**本地 AI 编程 Agent 很强大，但它们被锁在终端里。** 离开电脑就失去了控制权。
 
 | 没有 lazycoding | 有了 lazycoding |
 |----------------|----------------|
-| 必须坐在电脑前 | 手机、平板，任何 Telegram 客户端都可以 |
+| 必须坐在电脑前 | 手机、平板，任何聊天客户端都可以 |
 | 一次只能管一个项目 | 一个 bot 进程同时服务多个项目 |
 | 重启后上下文丢失 | Session 持久化，重启后无缝续接 |
 | 只能打字输入 | 支持语音，解放双手 |
 | 文件只在本地 | 可直接在聊天中收发文件 |
 
 **典型使用场景：**
-- 在手机上 review PR，让 Claude 直接应用修改意见
-- 通勤路上口述需求，Claude 在后台默默实现
-- 在团队群里共享一个 Claude 编码助手
+- 在手机上 review PR，让 Agent 直接应用修改意见
+- 通勤路上口述需求，Agent 在后台默默实现
+- 在团队群里共享一个 AI 编程助手
 - 发起耗时任务后离开电脑，完成后收到回复通知
 
 ---
@@ -70,15 +70,30 @@
 | 依赖 | 说明 |
 |------|------|
 | Go 1.21+ | 仅编译需要，运行时不依赖 Go 环境 |
-| `claude` CLI | 已登录，`claude --version` 可正常输出 |
+| AI 编程 Agent CLI | 至少安装其中一个：`claude`、`opencode` 或 `codex`，且在 `$PATH` 中可用 |
 | Telegram Bot Token | 从 @BotFather 申请，免费，2 分钟搞定 |
 | 飞书机器人凭据 | 可选——从 [open.feishu.cn](https://open.feishu.cn) 获取 App ID + App Secret |
 
-验证 claude CLI 可用：
+**支持的后端**（通过配置文件中的 `agent.backend` 切换）：
+
+| 后端 | 安装方式 | 默认 |
+|------|---------|------|
+| `claude` | [Claude Code](https://claude.ai/code)，需登录 | ✓ |
+| `opencode` | `npm install -g @opencode-ai/opencode` | |
+| `codex` | `npm install -g @openai/codex` | |
+
+验证所选 CLI 可用，例如：
 
 ```bash
+# Claude（默认）
 claude --version
 claude --print "hello" --output-format stream-json --dangerously-skip-permissions
+
+# OpenCode
+opencode run --format json "hello"
+
+# Codex
+codex exec --json --ask-for-approval never "hello"
 ```
 
 ---
@@ -94,11 +109,12 @@ make build
 # 2. 创建配置文件
 cp config.example.yaml config.yaml
 # 编辑 config.yaml：填入 telegram.token、allowed_user_ids、claude.work_dir
+# （如果使用其他后端，对应填写 opencode.work_dir 或 codex.work_dir）
 
 # 3. 启动
 ./lazycoding config.yaml
 
-# 4. 打开 Telegram，向 bot 发一条消息 —— Claude 开始工作
+# 4. 打开 Telegram，向 bot 发一条消息 —— Agent 开始工作
 ```
 
 ---
@@ -646,6 +662,31 @@ channels:
 claude:
   timeout_sec: 900   # 默认 900 秒（15 分钟），复杂任务可继续调大
 ```
+
+### 使用 OpenCode 或 Codex 替代 Claude
+
+lazycoding 支持三种本地 AI 编程后端，通过 `agent.backend` 切换：
+
+```yaml
+agent:
+  backend: "opencode"   # "claude"（默认）| "opencode" | "codex"
+```
+
+每个后端都有独立的 `work_dir` 和 `extra_flags`，共用 `claude.timeout_sec`：
+
+```yaml
+# OpenCode（npm install -g @opencode-ai/opencode）
+opencode:
+  work_dir: "/Users/yourname/projects/my-project"
+  extra_flags: []   # 追加到：opencode run --format json
+
+# Codex（npm install -g @openai/codex）
+codex:
+  work_dir: "/Users/yourname/projects/my-project"
+  extra_flags: []   # 追加到：codex exec --json --ask-for-approval never --sandbox workspace-write
+```
+
+`work_dir` 为空时回退到 `claude.work_dir`。`channels:` 中的对话级覆盖对所有后端同样有效。
 
 ### 终端对话日志
 

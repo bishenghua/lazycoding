@@ -17,10 +17,30 @@ type Config struct {
 	QQBot         QQBotConfig               `yaml:"qqbot"`
 	DingTalk      DingTalkConfig            `yaml:"dingtalk"`
 	WeWork        WeWorkConfig              `yaml:"wework"`
+	Agent         AgentConfig               `yaml:"agent"`
 	Claude        ClaudeConfig              `yaml:"claude"`
+	OpenCode      OpenCodeConfig            `yaml:"opencode"`
+	Codex         CodexConfig               `yaml:"codex"`
 	Channels      map[string]*ChannelConfig `yaml:"channels"` // key = chat ID string
 	Transcription TranscriptionConfig       `yaml:"transcription"`
 	Log           LogConfig                 `yaml:"log"`
+}
+
+// AgentConfig selects which AI backend to use.
+type AgentConfig struct {
+	Backend string `yaml:"backend"` // "claude" | "opencode" | "codex" (default: "claude")
+}
+
+// OpenCodeConfig holds settings for the opencode backend.
+type OpenCodeConfig struct {
+	WorkDir    string   `yaml:"work_dir"`    // default working directory; falls back to claude.work_dir
+	ExtraFlags []string `yaml:"extra_flags"` // default extra CLI flags for opencode
+}
+
+// CodexConfig holds settings for the codex backend.
+type CodexConfig struct {
+	WorkDir    string   `yaml:"work_dir"`    // default working directory; falls back to claude.work_dir
+	ExtraFlags []string `yaml:"extra_flags"` // default extra CLI flags for codex
 }
 
 // FeishuConfig holds Feishu/Lark bot settings.
@@ -111,22 +131,39 @@ func (c *Config) AllowedSet() map[int64]bool {
 }
 
 // WorkDirFor returns the effective work_dir for the given conversation ID.
-// Channel-specific override → global default → empty string (lazycoding launch dir).
+// Channel-specific override → backend default → claude default → empty string (launch dir).
 func (c *Config) WorkDirFor(conversationID string) string {
 	if ch, ok := c.Channels[conversationID]; ok && ch.WorkDir != "" {
 		return ch.WorkDir
+	}
+	switch c.Agent.Backend {
+	case "opencode":
+		if c.OpenCode.WorkDir != "" {
+			return c.OpenCode.WorkDir
+		}
+	case "codex":
+		if c.Codex.WorkDir != "" {
+			return c.Codex.WorkDir
+		}
 	}
 	return c.Claude.WorkDir
 }
 
 // ExtraFlagsFor returns the effective extra_flags for the given conversation ID.
 // A non-nil (even empty) slice in the channel override takes precedence over
-// the global default, allowing per-channel suppression of global flags.
+// the backend's global default, allowing per-channel suppression of global flags.
 func (c *Config) ExtraFlagsFor(conversationID string) []string {
 	if ch, ok := c.Channels[conversationID]; ok && ch.ExtraFlags != nil {
 		return ch.ExtraFlags
 	}
-	return c.Claude.ExtraFlags
+	switch c.Agent.Backend {
+	case "opencode":
+		return c.OpenCode.ExtraFlags
+	case "codex":
+		return c.Codex.ExtraFlags
+	default:
+		return c.Claude.ExtraFlags
+	}
 }
 
 // Load reads and validates the YAML config at path, applying defaults.

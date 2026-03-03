@@ -321,9 +321,15 @@ func (lc *Lazycoding) handleMessage(ctx context.Context, ev channel.InboundEvent
 
 	finalText := lc.consumeStream(ctx, ev, handle, events)
 
-	// After the response, show quick-reply buttons if Claude asked a question.
-	if ctx.Err() == nil && finalText != "" {
+	// Only proceed with post-response actions when the context is still alive
+	// (i.e. the user did not cancel the request).
+	if ctx.Err() != nil {
+		return
+	}
+
+	if finalText != "" {
 		if btns := detectQuickReplies(finalText); btns != nil {
+			// Show quick-reply buttons when the agent asked a yes/no question.
 			lc.ch.SendKeyboard(ctx, ev.ConversationID, "　", //nolint:errcheck
 				[][]channel.KeyboardButton{btns})
 		}
@@ -394,41 +400,39 @@ func (lc *Lazycoding) consumeStream(
 	var newSessionID string
 	var newUsage *agent.Usage
 	var lastFlush time.Time
-	textStarted := false
+	doneMarker := "" // set to "\n\n✅" when EventKindResult fires
 
-	// render builds the current message content as Telegram HTML.
+	// render builds the current message as a full transcript:
+	// tool invocations + their outputs, followed by the response text.
 	render := func() string {
 		var sb strings.Builder
 
-		if len(tools) > 0 {
-			if !textStarted {
-				// Processing phase: full tool log with outputs.
-				for _, t := range tools {
-					sb.WriteString(t.line)
-					sb.WriteString("\n")
-					if t.output != "" {
-						sb.WriteString("<pre><code>")
-						sb.WriteString(tgrender.EscapeHTML(t.output))
-						sb.WriteString("</code></pre>\n")
-					}
-				}
-				sb.WriteString("\n<i>(thinking…)</i>")
-			} else {
-				// Response phase: compact tool summary above the text.
-				for _, t := range tools {
-					sb.WriteString(t.line)
-					sb.WriteString("\n")
-				}
-				sb.WriteString("\n")
-				sb.WriteString(tgrender.MarkdownToTelegramHTML(textBuf.String()))
+		for _, t := range tools {
+			sb.WriteString(t.line)
+			sb.WriteString("\n")
+			if t.output != "" {
+				sb.WriteString("<pre><code>")
+				sb.WriteString(tgrender.EscapeHTML(t.output))
+				sb.WriteString("</code></pre>\n")
 			}
-			return sb.String()
 		}
 
 		if textBuf.Len() > 0 {
-			return tgrender.MarkdownToTelegramHTML(textBuf.String())
+			if len(tools) > 0 {
+				sb.WriteString("\n")
+			}
+			sb.WriteString(tgrender.MarkdownToTelegramHTML(textBuf.String()))
+			return sb.String() + doneMarker
 		}
-		return "<i>(thinking…)</i>"
+
+		if len(tools) > 0 {
+			if doneMarker == "" {
+				sb.WriteString("\n<i>(thinking…)</i>")
+			}
+			return sb.String() + doneMarker
+		}
+
+		return "<i>(thinking…)</i>" + doneMarker
 	}
 
 	statusKey := lc.sessionKey(ev.ConversationID)
@@ -456,9 +460,6 @@ func (lc *Lazycoding) consumeStream(
 			}
 
 		case agent.EventKindText:
-			if !textStarted {
-				textStarted = true
-			}
 			textBuf.WriteString(agEv.Text)
 			if lastFlush.IsZero() {
 				doFlush() // first text: show immediately
@@ -485,9 +486,7 @@ func (lc *Lazycoding) consumeStream(
 				out := truncateOutput(agEv.ToolResult)
 				if out != "" {
 					tools[idx].output = out
-					if !textStarted {
-						doFlush()
-					}
+					doFlush()
 				}
 			}
 
@@ -501,24 +500,43 @@ func (lc *Lazycoding) consumeStream(
 			if textBuf.Len() == 0 && agEv.Text != "" {
 				textBuf.WriteString(agEv.Text)
 			}
-			// If the combined tools+text content would exceed Telegram's limit,
-			// keep the placeholder for the tool summary and send the response
+			doneMarker = "\n\n✅"
+			// If the combined transcript would exceed Telegram's limit,
+			// keep the tool log in the placeholder and send the response
 			// text as one or more new messages so nothing gets truncated.
 			finalContent := render()
 			if utf8.RuneCountInString(finalContent) > tgrender.MaxMessageLen && textBuf.Len() > 0 {
-				var toolsSummary strings.Builder
+				// Build the tool log (with outputs) for the placeholder.
+				var toolLog strings.Builder
 				for _, t := range tools {
-					toolsSummary.WriteString(t.line)
-					toolsSummary.WriteString("\n")
+					toolLog.WriteString(t.line)
+					toolLog.WriteString("\n")
+					if t.output != "" {
+						toolLog.WriteString("<pre><code>")
+						toolLog.WriteString(tgrender.EscapeHTML(t.output))
+						toolLog.WriteString("</code></pre>\n")
+					}
 				}
-				summary := strings.TrimRight(toolsSummary.String(), "\n")
-				if summary == "" {
-					summary = "<i>(done)</i>"
+				placeholder := strings.TrimRight(toolLog.String(), "\n")
+				// If tool log alone is still too long, fall back to compact names.
+				if utf8.RuneCountInString(placeholder) > tgrender.MaxMessageLen {
+					var compact strings.Builder
+					for _, t := range tools {
+						compact.WriteString(t.line + "\n")
+					}
+					placeholder = strings.TrimRight(compact.String(), "\n")
 				}
-				lc.ch.UpdateText(ctx, handle, summary) //nolint:errcheck
+				if placeholder == "" {
+					placeholder = "<i>(done)</i>"
+				}
+				lc.ch.UpdateText(ctx, handle, placeholder) //nolint:errcheck
 				handle.Seal()
 				htmlText := tgrender.MarkdownToTelegramHTML(textBuf.String())
-				for _, part := range tgrender.Split(htmlText) {
+				parts := tgrender.Split(htmlText)
+				for i, part := range parts {
+					if i == len(parts)-1 {
+						part += "\n\n✅"
+					}
 					lc.ch.SendText(ctx, ev.ConversationID, part) //nolint:errcheck
 				}
 			} else {

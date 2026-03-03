@@ -152,7 +152,7 @@ func formatInput(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err == nil {
 		for _, key := range []string{"command", "description", "path", "query"} {
 			if v, ok := m[key]; ok {

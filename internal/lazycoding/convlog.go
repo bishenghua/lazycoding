@@ -180,7 +180,7 @@ func formatToolInput(toolName, input, workDir string) string {
 	case "TodoWrite":
 		raw, ok := m["todos"]
 		if ok {
-			var todos []interface{}
+			var todos []any
 			if err := json.Unmarshal(raw, &todos); err == nil {
 				return fmt.Sprintf("(%d todos)", len(todos))
 			}

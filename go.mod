@@ -1,6 +1,6 @@
 module github.com/bishenghua/lazycoding
 
-go 1.23
+go 1.26
 
 require (
 	github.com/ggerganov/whisper.cpp/bindings/go v0.0.0-20260219151842-21411d81ea73

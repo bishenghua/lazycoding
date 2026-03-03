@@ -144,6 +144,26 @@ wework:
 
 
 # ─────────────────────────────────────────────────────────────
+# AI agent backend selection
+# ─────────────────────────────────────────────────────────────
+#
+# Three local AI coding agents are supported:
+#
+#   backend    | CLI binary | Notes
+#   ───────────┼────────────┼──────────────────────────────────
+#   claude     | claude     | Default. Claude Code CLI.
+#   opencode   | opencode   | OpenCode CLI (--format json mode)
+#   codex      | codex      | OpenAI Codex CLI (--json mode)
+#
+# The active backend must be installed and on $PATH.
+# Each backend has its own work_dir and extra_flags section below.
+# All backends share timeout_sec from the claude section.
+#
+agent:
+  backend: "claude"   # "claude" | "opencode" | "codex"
+
+
+# ─────────────────────────────────────────────────────────────
 # Claude CLI – global defaults
 # ─────────────────────────────────────────────────────────────
 claude:
@@ -162,6 +182,36 @@ claude:
 
   # Request timeout in seconds.  Claude is force-killed after this time.
   timeout_sec: 900
+
+
+# ─────────────────────────────────────────────────────────────
+# OpenCode CLI – settings when agent.backend = "opencode"
+# ─────────────────────────────────────────────────────────────
+# Install: npm install -g @opencode-ai/opencode  (or via brew)
+#
+opencode:
+  # Default working directory.  Falls back to claude.work_dir when empty.
+  work_dir: ""
+
+  # Extra flags appended to every "opencode run --format json" invocation.
+  # Example – use a specific model:
+  #   extra_flags:
+  #     - "--model"
+  #     - "anthropic/claude-opus-4-6"
+  extra_flags: []
+
+
+# ─────────────────────────────────────────────────────────────
+# Codex CLI – settings when agent.backend = "codex"
+# ─────────────────────────────────────────────────────────────
+# Install: npm install -g @openai/codex
+#
+codex:
+  # Default working directory.  Falls back to claude.work_dir when empty.
+  work_dir: ""
+
+  # Extra flags appended to every "codex exec --json" invocation.
+  extra_flags: []
 
 
 # ─────────────────────────────────────────────────────────────

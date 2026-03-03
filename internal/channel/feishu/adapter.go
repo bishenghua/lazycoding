@@ -517,8 +517,8 @@ func (a *Adapter) parseAction(raw json.RawMessage) (channel.InboundEvent, bool) 
 // ── Card builders ─────────────────────────────────────────────────────────────
 
 type cardBody struct {
-	Config   cardConfig    `json:"config"`
-	Elements []interface{} `json:"elements"`
+	Config   cardConfig `json:"config"`
+	Elements []any      `json:"elements"`
 }
 type cardConfig struct {
 	WideScreenMode bool `json:"wide_screen_mode"`
@@ -536,14 +536,14 @@ type cardAction struct {
 	Actions []cardButton `json:"actions"`
 }
 type cardButton struct {
-	Tag   string      `json:"tag"`
-	Text  cardText    `json:"text"`
-	Type  string      `json:"type"`
-	Value interface{} `json:"value"`
+	Tag   string   `json:"tag"`
+	Text  cardText `json:"text"`
+	Type  string   `json:"type"`
+	Value any      `json:"value"`
 }
 
 func buildCard(content string, buttons []channel.KeyboardButton) string {
-	elements := []interface{}{
+	elements := []any{
 		cardDiv{
 			Tag:  "div",
 			Text: cardText{Tag: "lark_md", Content: content},
@@ -668,11 +668,11 @@ func (a *Adapter) uploadFile(ctx context.Context, filePath string) (string, erro
 
 // doRequest marshals payload, adds auth, calls the API, and returns the raw body.
 // It retries once if the token has expired (code 99991671).
-func (a *Adapter) doRequest(ctx context.Context, method, url string, payload interface{}) ([]byte, error) {
+func (a *Adapter) doRequest(ctx context.Context, method, url string, payload any) ([]byte, error) {
 	return a.doRequestInner(ctx, method, url, payload, false)
 }
 
-func (a *Adapter) doRequestInner(ctx context.Context, method, url string, payload interface{}, retried bool) ([]byte, error) {
+func (a *Adapter) doRequestInner(ctx context.Context, method, url string, payload any, retried bool) ([]byte, error) {
 	token, err := a.getToken(ctx)
 	if err != nil {
 		return nil, err

@@ -8,7 +8,10 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/bishenghua/lazycoding/internal/agent"
 	"github.com/bishenghua/lazycoding/internal/agent/claude"
+	"github.com/bishenghua/lazycoding/internal/agent/codex"
+	"github.com/bishenghua/lazycoding/internal/agent/opencode"
 	"github.com/bishenghua/lazycoding/internal/channel"
 	dtadapter "github.com/bishenghua/lazycoding/internal/channel/dingtalk"
 	fsadapter "github.com/bishenghua/lazycoding/internal/channel/feishu"
@@ -113,7 +116,18 @@ func main() {
 
 	ch := channel.NewMultiAdapter(adapters...)
 
-	runner := claude.New(&cfg.Claude)
+	var runner agent.Agent
+	switch cfg.Agent.Backend {
+	case "opencode":
+		runner = opencode.New(&cfg.OpenCode, &cfg.Claude)
+		slog.Info("agent backend: opencode")
+	case "codex":
+		runner = codex.New(&cfg.Codex, &cfg.Claude)
+		slog.Info("agent backend: codex")
+	default:
+		runner = claude.New(&cfg.Claude)
+		slog.Info("agent backend: claude")
+	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {

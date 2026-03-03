@@ -25,7 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -191,7 +191,7 @@ func (a *Adapter) sendMsgChunk(ctx context.Context, toUser, markdown string) err
 	if err != nil {
 		return err
 	}
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"touser":  toUser,
 		"msgtype": "markdown",
 		"agentid": a.cfg.AgentID,
@@ -601,7 +601,7 @@ func (a *Adapter) verifySignature(sig, timestamp, nonce, encrypt string) bool {
 		return true // no token configured, skip verification
 	}
 	parts := []string{a.cfg.Token, timestamp, nonce, encrypt}
-	sort.Strings(parts)
+	slices.Sort(parts)
 	h := sha1.New()
 	h.Write([]byte(strings.Join(parts, "")))
 	computed := fmt.Sprintf("%x", h.Sum(nil))

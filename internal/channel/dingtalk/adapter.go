@@ -184,7 +184,7 @@ func (a *Adapter) postWebhook(ctx context.Context, webhookURL, md string) error 
 	}
 	chunks := splitText(md, dtMaxMsgLen)
 	for _, chunk := range chunks {
-		payload := map[string]interface{}{
+		payload := map[string]any{
 			"msgtype": "markdown",
 			"markdown": map[string]string{
 				"title": "Reply",
@@ -264,7 +264,7 @@ type streamEndpoint struct {
 }
 
 func (a *Adapter) getStreamEndpoint(ctx context.Context, token string) (string, error) {
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"clientId":     a.cfg.AppKey,
 		"clientSecret": a.cfg.AppSecret,
 		"subscriptions": []map[string]string{
@@ -402,7 +402,7 @@ func (a *Adapter) serveStreamConn(ctx context.Context, conn *websocket.Conn) err
 	}
 
 	sendACK := func(messageID string) {
-		ackData, _ := json.Marshal(map[string]interface{}{
+		ackData, _ := json.Marshal(map[string]any{
 			"code":    200,
 			"message": "OK",
 			"requestId": messageID,

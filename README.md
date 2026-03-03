@@ -2,9 +2,9 @@
 
 [English](../README.md) · [简体中文](docs/README.zh-CN.md)
 
-**Control a local Claude Code session from your phone — over Telegram, Feishu (Lark), QQ, DingTalk, or WeCom.**
+**Control a local AI coding agent from your phone — over Telegram, Feishu (Lark), QQ, DingTalk, or WeCom.**
 
-Write code, fix bugs, and manage multiple projects — all by sending a message. lazycoding runs on your machine, bridges your chat platform to the `claude` CLI, and streams every tool call and response back to your chat in real time.
+Write code, fix bugs, and manage multiple projects — all by sending a message. lazycoding runs on your machine, bridges your chat platform to a local AI coding agent (Claude Code, OpenCode, or Codex), and streams every tool call and response back to your chat in real time.
 
 ```
 You (anywhere, any device)
@@ -14,9 +14,9 @@ You (anywhere, any device)
         │
         ▼
    lazycoding  ← runs on your dev machine
-        │  claude --print --output-format stream-json
+        │  claude / opencode / codex  (your choice)
         ▼
-   Claude Code  ← reads files, runs commands, writes code
+   AI coding agent  ← reads files, runs commands, writes code
         │
         ▼
    Streaming output → back to your chat in real time
@@ -26,20 +26,20 @@ You (anywhere, any device)
 
 ## Why lazycoding?
 
-**Claude Code is powerful but tied to a terminal.** lazycoding removes that constraint.
+**Local AI coding agents are powerful but tied to a terminal.** lazycoding removes that constraint.
 
 | Without lazycoding | With lazycoding |
 |--------------------|-----------------|
-| Must be at your computer | Works from your phone, tablet, or any Telegram client |
+| Must be at your computer | Works from your phone, tablet, or any chat client |
 | One project per session | One bot serves multiple projects simultaneously |
 | Manual session management | Sessions persist across restarts; context is never lost |
 | No voice input | Dictate tasks hands-free |
 | Files stay local | Send/receive files directly in chat |
 
 **Ideal for:**
-- Reviewing a PR on your phone and having Claude apply the fixes
-- Dictating a feature spec during a commute and watching Claude implement it
-- Sharing a Claude-powered coding assistant with your team over a group chat
+- Reviewing a PR on your phone and having the agent apply the fixes
+- Dictating a feature spec during a commute and watching it get implemented
+- Sharing an AI-powered coding assistant with your team over a group chat
 - Running long tasks in the background and getting notified when they complete
 
 ---
@@ -70,15 +70,30 @@ You (anywhere, any device)
 | Dependency | Notes |
 |------------|-------|
 | Go 1.21+ | Build only; the compiled binary has no runtime dependencies |
-| `claude` CLI | Must be logged in — `claude --version` should work |
+| AI coding agent CLI | At least one of: `claude`, `opencode`, or `codex` — must be on `$PATH` |
 | Telegram Bot Token | Obtain from @BotFather (free, takes 2 minutes) |
 | Feishu Bot Credentials | Optional — App ID + App Secret from [open.feishu.cn](https://open.feishu.cn) |
 
-Verify the Claude CLI works:
+**Supported backends** (`agent.backend` in config):
+
+| Backend | Install | Default |
+|---------|---------|---------|
+| `claude` | [Claude Code](https://claude.ai/code) — must be logged in | ✓ |
+| `opencode` | `npm install -g @opencode-ai/opencode` | |
+| `codex` | `npm install -g @openai/codex` | |
+
+Verify your chosen CLI works, for example:
 
 ```bash
+# Claude (default)
 claude --version
 claude --print "hello" --output-format stream-json --dangerously-skip-permissions
+
+# OpenCode
+opencode run --format json "hello"
+
+# Codex
+codex exec --json --ask-for-approval never "hello"
 ```
 
 ---
@@ -94,11 +109,12 @@ make build
 # 2. Create your config
 cp config.example.yaml config.yaml
 # Edit config.yaml: set telegram.token, allowed_user_ids, and claude.work_dir
+# (or opencode.work_dir / codex.work_dir if using a different backend)
 
 # 3. Run
 ./lazycoding config.yaml
 
-# 4. Open Telegram, send your bot a message — Claude starts working
+# 4. Open Telegram, send your bot a message — the agent starts working
 ```
 
 ---
@@ -635,6 +651,31 @@ channels:
 claude:
   timeout_sec: 900   # 15 min; increase for very long tasks
 ```
+
+### Use OpenCode or Codex instead of Claude
+
+lazycoding supports three local AI coding backends.  Switch by setting `agent.backend`:
+
+```yaml
+agent:
+  backend: "opencode"   # "claude" (default) | "opencode" | "codex"
+```
+
+Each backend has its own config section for `work_dir` and `extra_flags`; all share `claude.timeout_sec`:
+
+```yaml
+# OpenCode (npm install -g @opencode-ai/opencode)
+opencode:
+  work_dir: "/Users/yourname/projects/my-project"
+  extra_flags: []   # appended to: opencode run --format json
+
+# Codex (npm install -g @openai/codex)
+codex:
+  work_dir: "/Users/yourname/projects/my-project"
+  extra_flags: []   # appended to: codex exec --json --ask-for-approval never --sandbox workspace-write
+```
+
+`work_dir` falls back to `claude.work_dir` when left empty.  Per-conversation `channels:` overrides work the same for all backends.
 
 ### Terminal conversation log
 
