@@ -77,7 +77,7 @@ func main() {
 	}
 
 	if cfg.QQBot.AppID != "" {
-		qqCh, err := qqadapter.New(cfg)
+		qqCh, err := qqadapter.New(cfg, tr)
 		if err != nil {
 			slog.Error("qqbot adapter init", "err", err)
 			os.Exit(1)
@@ -87,7 +87,7 @@ func main() {
 	}
 
 	if cfg.DingTalk.AppKey != "" {
-		dtCh, err := dtadapter.New(cfg)
+		dtCh, err := dtadapter.New(cfg, tr)
 		if err != nil {
 			slog.Error("dingtalk adapter init", "err", err)
 			os.Exit(1)
@@ -97,7 +97,7 @@ func main() {
 	}
 
 	if cfg.WeWork.CorpID != "" {
-		wwCh, err := wwadapter.New(cfg)
+		wwCh, err := wwadapter.New(cfg, tr)
 		if err != nil {
 			slog.Error("wework adapter init", "err", err)
 			os.Exit(1)

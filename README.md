@@ -367,9 +367,9 @@ wework:
 |---------|----------|--------|--------|----------|-------|
 | Public IP required | ❌ No | ❌ No | ❌ No | ❌ No | ✅ Yes |
 | Connection mode | Long-poll | WebSocket | WebSocket | WebSocket | Webhook |
-| Voice input | ✅ | ✅ | ❌ | ❌ | ❌ |
-| File upload → project dir | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Image upload → project dir | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Voice input | ✅ | ✅ | ✅ | ✅ | ✅ |
+| File upload → project dir | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Image upload → project dir | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Inline cancel button | ✅ | ✅ | ❌ | ❌ | ❌ |
 | Quick-reply buttons | ✅ | ✅ | ❌ | ❌ | ❌ |
 | Message queuing | ✅ | ✅ | ✅ | ✅ | ✅ |

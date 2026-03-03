@@ -17,6 +17,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -26,6 +28,7 @@ import (
 
 	"github.com/bishenghua/lazycoding/internal/channel"
 	"github.com/bishenghua/lazycoding/internal/config"
+	"github.com/bishenghua/lazycoding/internal/transcribe"
 )
 
 const (
@@ -36,7 +39,9 @@ const (
 
 // Adapter implements channel.Channel for DingTalk bots.
 type Adapter struct {
-	cfg *config.DingTalkConfig
+	cfg    *config.DingTalkConfig
+	appCfg *config.Config
+	tr     transcribe.Transcriber // nil = voice not supported
 
 	tokenMu  sync.Mutex
 	token    string
@@ -51,9 +56,12 @@ type Adapter struct {
 }
 
 // New creates a DingTalk Adapter and validates credentials.
-func New(cfg *config.Config) (*Adapter, error) {
+// tr may be nil to disable voice transcription.
+func New(cfg *config.Config, tr transcribe.Transcriber) (*Adapter, error) {
 	a := &Adapter{
 		cfg:      &cfg.DingTalk,
+		appCfg:   cfg,
+		tr:       tr,
 		webhooks: make(map[string]string),
 		events:   make(chan channel.InboundEvent, 16),
 	}
@@ -468,11 +476,32 @@ func (a *Adapter) serveStreamConn(ctx context.Context, conn *websocket.Conn) err
 // ── Event handling ────────────────────────────────────────────────────────────
 
 type dtBotMessage struct {
-	ConversationID            string `json:"conversationId"`
-	MsgType                   string `json:"msgtype"`
-	Text                      struct {
+	ConversationID string `json:"conversationId"`
+	MsgType        string `json:"msgtype"`
+	Text           struct {
 		Content string `json:"content"`
 	} `json:"text"`
+	// Audio/voice message fields.
+	Audio struct {
+		Duration     string `json:"duration"`
+		MediaID      string `json:"mediaId"`
+		DownloadCode string `json:"downloadCode"`
+	} `json:"audio"`
+	Voice struct {
+		Duration     string `json:"duration"`
+		MediaID      string `json:"mediaId"`
+		DownloadCode string `json:"downloadCode"`
+	} `json:"voice"`
+	// Picture message fields.
+	Picture struct {
+		DownloadCode string `json:"downloadCode"`
+		PicURL       string `json:"picURL"`
+	} `json:"picture"`
+	// File message fields.
+	File struct {
+		DownloadCode string `json:"downloadCode"`
+		FileName     string `json:"fileName"`
+	} `json:"file"`
 	SenderStaffID             string `json:"senderStaffId"`
 	SenderID                  string `json:"senderId"`
 	SessionWebhook            string `json:"sessionWebhook"`
@@ -488,17 +517,11 @@ func (a *Adapter) handleEvent(ctx context.Context, f streamFrame) {
 		slog.Debug("dingtalk: decode bot message", "err", err)
 		return
 	}
-	if msg.MsgType != "text" || msg.ConversationID == "" {
+	if msg.ConversationID == "" {
 		return
 	}
 	if msg.SessionWebhook != "" {
 		a.setWebhook(msg.ConversationID, msg.SessionWebhook)
-	}
-
-	// DingTalk group messages start with space + @mention content; trim.
-	text := strings.TrimSpace(msg.Text.Content)
-	if text == "" {
-		return
 	}
 
 	senderID := msg.SenderStaffID
@@ -510,22 +533,194 @@ func (a *Adapter) handleEvent(ctx context.Context, f streamFrame) {
 		UserKey:        "dt:" + senderID,
 		ConversationID: msg.ConversationID,
 	}
-	if strings.HasPrefix(text, "/") {
-		parts := strings.SplitN(text[1:], " ", 2)
-		ev.IsCommand = true
-		ev.Command = strings.ToLower(strings.TrimSpace(parts[0]))
-		if len(parts) > 1 {
-			ev.CommandArgs = strings.TrimSpace(parts[1])
-			ev.Text = ev.CommandArgs
+
+	switch msg.MsgType {
+	case "text":
+		// DingTalk group messages start with space + @mention content; trim.
+		text := strings.TrimSpace(msg.Text.Content)
+		if text == "" {
+			return
 		}
-	} else {
-		ev.Text = text
+		if strings.HasPrefix(text, "/") {
+			parts := strings.SplitN(text[1:], " ", 2)
+			ev.IsCommand = true
+			ev.Command = strings.ToLower(strings.TrimSpace(parts[0]))
+			if len(parts) > 1 {
+				ev.CommandArgs = strings.TrimSpace(parts[1])
+				ev.Text = ev.CommandArgs
+			}
+		} else {
+			ev.Text = text
+		}
+
+	case "audio", "voice":
+		downloadCode := msg.Audio.DownloadCode
+		if downloadCode == "" {
+			downloadCode = msg.Voice.DownloadCode
+		}
+		if !a.handleDTAudio(ctx, downloadCode, &ev) {
+			return
+		}
+
+	case "picture":
+		if !a.handleDTPicture(ctx, msg.Picture.DownloadCode, msg.Picture.PicURL, &ev) {
+			return
+		}
+
+	case "file":
+		if !a.handleDTFile(ctx, msg.File.DownloadCode, msg.File.FileName, &ev) {
+			return
+		}
+
+	default:
+		slog.Debug("dingtalk: unsupported message type", "type", msg.MsgType)
+		return
 	}
 
 	select {
 	case a.events <- ev:
 	case <-ctx.Done():
 	}
+}
+
+// downloadMedia fetches a DingTalk file using its downloadCode and saves it to destPath.
+// It first calls the DingTalk download API to get the actual URL, then downloads the file.
+func (a *Adapter) downloadMedia(ctx context.Context, downloadCode, destPath string) error {
+	if downloadCode == "" {
+		return fmt.Errorf("no download code")
+	}
+	token, err := a.getToken(ctx)
+	if err != nil {
+		return err
+	}
+	apiURL := fmt.Sprintf("https://api.dingtalk.com/v1.0/robot/messageFiles/download?downloadCode=%s&robotCode=%s",
+		downloadCode, a.cfg.AppKey)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("x-acs-dingtalk-access-token", token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("get download URL: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+
+	var result struct {
+		DownloadURL string `json:"downloadUrl"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil || result.DownloadURL == "" {
+		return fmt.Errorf("get download URL: unexpected response: %s", string(raw))
+	}
+
+	return dtDownloadDirect(ctx, result.DownloadURL, destPath)
+}
+
+func dtDownloadDirect(ctx context.Context, url, destPath string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("http get: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	f, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = io.Copy(f, resp.Body)
+	return err
+}
+
+func (a *Adapter) handleDTAudio(ctx context.Context, downloadCode string, ev *channel.InboundEvent) bool {
+	if a.tr == nil {
+		a.postWebhook(ctx, a.getWebhook(ev.ConversationID), //nolint:errcheck
+			"⚠️ Voice transcription is not enabled.\n"+
+				"Set `transcription.enabled: true` in config.yaml and restart.")
+		return false
+	}
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("lc-dt-voice-%d.amr", time.Now().UnixNano()))
+	if err := a.downloadMedia(ctx, downloadCode, tmpFile); err != nil {
+		slog.Error("dingtalk audio download failed", "err", err)
+		a.postWebhook(ctx, a.getWebhook(ev.ConversationID), //nolint:errcheck
+			fmt.Sprintf("⚠️ Audio download failed: %v", err))
+		return false
+	}
+	defer os.Remove(tmpFile)
+	text, err := a.tr.Transcribe(ctx, tmpFile)
+	if err != nil {
+		slog.Error("dingtalk transcription failed", "err", err)
+		a.postWebhook(ctx, a.getWebhook(ev.ConversationID), //nolint:errcheck
+			fmt.Sprintf("⚠️ Transcription failed: %v", err))
+		return false
+	}
+	ev.Text = text
+	ev.IsVoice = true
+	return true
+}
+
+func (a *Adapter) handleDTPicture(ctx context.Context, downloadCode, picURL string, ev *channel.InboundEvent) bool {
+	workDir := a.appCfg.WorkDirFor(ev.ConversationID)
+	if workDir == "" {
+		workDir = "."
+	}
+	filename := fmt.Sprintf("photo_%s.jpg", time.Now().Format("20060102_150405"))
+	destPath := filepath.Join(workDir, filename)
+	var err error
+	if downloadCode != "" {
+		err = a.downloadMedia(ctx, downloadCode, destPath)
+	} else if picURL != "" {
+		err = dtDownloadDirect(ctx, picURL, destPath)
+	} else {
+		err = fmt.Errorf("no download source")
+	}
+	if err != nil {
+		slog.Error("dingtalk image download failed", "err", err)
+		a.postWebhook(ctx, a.getWebhook(ev.ConversationID), //nolint:errcheck
+			fmt.Sprintf("⚠️ Image download failed: %v", err))
+		return false
+	}
+	slog.Info("dingtalk image saved", "path", destPath)
+	ev.Text = "[File saved to work directory: " + filename + "]"
+	return true
+}
+
+func (a *Adapter) handleDTFile(ctx context.Context, downloadCode, fileName string, ev *channel.InboundEvent) bool {
+	workDir := a.appCfg.WorkDirFor(ev.ConversationID)
+	if workDir == "" {
+		workDir = "."
+	}
+	filename := dtSanitizeFilename(fileName)
+	if filename == "" {
+		filename = fmt.Sprintf("upload_%d", time.Now().UnixNano())
+	}
+	destPath := filepath.Join(workDir, filename)
+	if err := a.downloadMedia(ctx, downloadCode, destPath); err != nil {
+		slog.Error("dingtalk file download failed", "err", err)
+		a.postWebhook(ctx, a.getWebhook(ev.ConversationID), //nolint:errcheck
+			fmt.Sprintf("⚠️ File download failed: %v", err))
+		return false
+	}
+	slog.Info("dingtalk file saved", "path", destPath)
+	ev.Text = "[File saved to work directory: " + filename + "]"
+	return true
+}
+
+func dtSanitizeFilename(name string) string {
+	name = filepath.Base(name)
+	name = strings.TrimLeft(name, ".")
+	return name
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────

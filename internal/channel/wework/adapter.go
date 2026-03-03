@@ -22,6 +22,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -30,6 +32,7 @@ import (
 
 	"github.com/bishenghua/lazycoding/internal/channel"
 	"github.com/bishenghua/lazycoding/internal/config"
+	"github.com/bishenghua/lazycoding/internal/transcribe"
 )
 
 const (
@@ -40,7 +43,9 @@ const (
 // Adapter implements channel.Channel for WeCom bots.
 type Adapter struct {
 	cfg    *config.WeWorkConfig
-	aesKey []byte // 32-byte AES key derived from EncodingAESKey
+	appCfg *config.Config
+	tr     transcribe.Transcriber // nil = voice not supported
+	aesKey []byte                 // 32-byte AES key derived from EncodingAESKey
 
 	tokenMu  sync.Mutex
 	token    string
@@ -50,7 +55,8 @@ type Adapter struct {
 }
 
 // New creates a WeCom Adapter and validates credentials.
-func New(cfg *config.Config) (*Adapter, error) {
+// tr may be nil to disable voice transcription.
+func New(cfg *config.Config, tr transcribe.Transcriber) (*Adapter, error) {
 	if cfg.WeWork.EncodingAESKey == "" {
 		return nil, fmt.Errorf("wework: encoding_aes_key is required")
 	}
@@ -61,6 +67,8 @@ func New(cfg *config.Config) (*Adapter, error) {
 	}
 	a := &Adapter{
 		cfg:    &cfg.WeWork,
+		appCfg: cfg,
+		tr:     tr,
 		aesKey: aesKey,
 		events: make(chan channel.InboundEvent, 16),
 	}
@@ -270,6 +278,15 @@ type wxXMLMessage struct {
 	Content      string `xml:"Content"`
 	MsgID        string `xml:"MsgId"`
 	AgentID      int    `xml:"AgentID"`
+	// Image fields.
+	PicUrl string `xml:"PicUrl"`
+	// Media fields (voice, video, file, image).
+	MediaId string `xml:"MediaId"`
+	// Voice-specific fields.
+	Format      string `xml:"Format"`      // amr, speex, etc.
+	Recognition string `xml:"Recognition"` // WeCom auto-transcription (optional)
+	// File-specific fields.
+	FileName string `xml:"FileName"`
 }
 
 // wxEncryptedMsg wraps the encrypted message in WeCom's callback format.
@@ -361,11 +378,7 @@ func (a *Adapter) processPostMessage(ctx context.Context, body []byte, msgSig, t
 }
 
 func (a *Adapter) dispatchMessage(ctx context.Context, msg *wxXMLMessage) {
-	if msg.MsgType != "text" || msg.FromUserName == "" {
-		return
-	}
-	text := strings.TrimSpace(msg.Content)
-	if text == "" {
+	if msg.FromUserName == "" {
 		return
 	}
 
@@ -373,22 +386,169 @@ func (a *Adapter) dispatchMessage(ctx context.Context, msg *wxXMLMessage) {
 		UserKey:        "ww:" + msg.FromUserName,
 		ConversationID: msg.FromUserName, // reply back to this user
 	}
-	if strings.HasPrefix(text, "/") {
-		parts := strings.SplitN(text[1:], " ", 2)
-		ev.IsCommand = true
-		ev.Command = strings.ToLower(strings.TrimSpace(parts[0]))
-		if len(parts) > 1 {
-			ev.CommandArgs = strings.TrimSpace(parts[1])
-			ev.Text = ev.CommandArgs
+
+	switch msg.MsgType {
+	case "text":
+		text := strings.TrimSpace(msg.Content)
+		if text == "" {
+			return
 		}
-	} else {
-		ev.Text = text
+		if strings.HasPrefix(text, "/") {
+			parts := strings.SplitN(text[1:], " ", 2)
+			ev.IsCommand = true
+			ev.Command = strings.ToLower(strings.TrimSpace(parts[0]))
+			if len(parts) > 1 {
+				ev.CommandArgs = strings.TrimSpace(parts[1])
+				ev.Text = ev.CommandArgs
+			}
+		} else {
+			ev.Text = text
+		}
+
+	case "voice":
+		if !a.handleWWVoice(ctx, msg, &ev) {
+			return
+		}
+
+	case "image":
+		if !a.handleWWImage(ctx, msg, &ev) {
+			return
+		}
+
+	case "file":
+		if !a.handleWWFile(ctx, msg, &ev) {
+			return
+		}
+
+	default:
+		slog.Debug("wework: unsupported message type", "type", msg.MsgType)
+		return
 	}
 
 	select {
 	case a.events <- ev:
 	case <-ctx.Done():
 	}
+}
+
+// downloadMedia fetches a WeCom media file by media_id and saves it to destPath.
+func (a *Adapter) downloadMedia(ctx context.Context, mediaID, destPath string) error {
+	token, err := a.getToken(ctx)
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("%s/media/get?access_token=%s&media_id=%s", wwAPIBase, token, mediaID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("http get: %w", err)
+	}
+	defer resp.Body.Close()
+	// If WeCom returns JSON it means an error occurred.
+	if ct := resp.Header.Get("Content-Type"); strings.Contains(ct, "application/json") {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("media download failed: %s", strings.TrimSpace(string(body)))
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	f, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = io.Copy(f, resp.Body)
+	return err
+}
+
+func (a *Adapter) handleWWVoice(ctx context.Context, msg *wxXMLMessage, ev *channel.InboundEvent) bool {
+	// Use WeCom's automatic transcription as fallback when no transcriber is configured.
+	if a.tr == nil {
+		if msg.Recognition != "" {
+			ev.Text = msg.Recognition
+			ev.IsVoice = true
+			return true
+		}
+		a.sendMsg(ctx, ev.ConversationID, //nolint:errcheck
+			"⚠️ Voice transcription is not enabled.\n"+
+				"Set `transcription.enabled: true` in config.yaml and restart.\n"+
+				"(Or enable voice recognition in the WeCom admin panel for automatic transcription.)")
+		return false
+	}
+	ext := ".amr" // WeCom default voice format
+	if msg.Format != "" {
+		ext = "." + strings.ToLower(msg.Format)
+	}
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("lc-ww-voice-%d%s", time.Now().UnixNano(), ext))
+	if err := a.downloadMedia(ctx, msg.MediaId, tmpFile); err != nil {
+		slog.Error("wework voice download failed", "err", err)
+		a.sendMsg(ctx, ev.ConversationID, //nolint:errcheck
+			fmt.Sprintf("⚠️ Audio download failed: %v", err))
+		return false
+	}
+	defer os.Remove(tmpFile)
+	text, err := a.tr.Transcribe(ctx, tmpFile)
+	if err != nil {
+		slog.Error("wework transcription failed", "err", err)
+		a.sendMsg(ctx, ev.ConversationID, //nolint:errcheck
+			fmt.Sprintf("⚠️ Transcription failed: %v", err))
+		return false
+	}
+	ev.Text = text
+	ev.IsVoice = true
+	return true
+}
+
+func (a *Adapter) handleWWImage(ctx context.Context, msg *wxXMLMessage, ev *channel.InboundEvent) bool {
+	workDir := a.appCfg.WorkDirFor(ev.ConversationID)
+	if workDir == "" {
+		workDir = "."
+	}
+	filename := fmt.Sprintf("photo_%s.jpg", time.Now().Format("20060102_150405"))
+	destPath := filepath.Join(workDir, filename)
+	if err := a.downloadMedia(ctx, msg.MediaId, destPath); err != nil {
+		slog.Error("wework image download failed", "err", err)
+		a.sendMsg(ctx, ev.ConversationID, //nolint:errcheck
+			fmt.Sprintf("⚠️ Image download failed: %v", err))
+		return false
+	}
+	slog.Info("wework image saved", "path", destPath)
+	ev.Text = "[File saved to work directory: " + filename + "]"
+	return true
+}
+
+func (a *Adapter) handleWWFile(ctx context.Context, msg *wxXMLMessage, ev *channel.InboundEvent) bool {
+	workDir := a.appCfg.WorkDirFor(ev.ConversationID)
+	if workDir == "" {
+		workDir = "."
+	}
+	filename := wwSanitizeFilename(msg.FileName)
+	if filename == "" {
+		filename = fmt.Sprintf("upload_%d", time.Now().UnixNano())
+	}
+	destPath := filepath.Join(workDir, filename)
+	if err := a.downloadMedia(ctx, msg.MediaId, destPath); err != nil {
+		slog.Error("wework file download failed", "err", err)
+		a.sendMsg(ctx, ev.ConversationID, //nolint:errcheck
+			fmt.Sprintf("⚠️ File download failed: %v", err))
+		return false
+	}
+	slog.Info("wework file saved", "path", destPath)
+	ev.Text = "[File saved to work directory: " + filename + "]"
+	return true
+}
+
+func wwSanitizeFilename(name string) string {
+	name = filepath.Base(name)
+	name = strings.TrimLeft(name, ".")
+	return name
 }
 
 // ── AES decryption ────────────────────────────────────────────────────────────

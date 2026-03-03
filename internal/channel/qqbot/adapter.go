@@ -16,6 +16,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -25,6 +27,7 @@ import (
 
 	"github.com/bishenghua/lazycoding/internal/channel"
 	"github.com/bishenghua/lazycoding/internal/config"
+	"github.com/bishenghua/lazycoding/internal/transcribe"
 )
 
 const (
@@ -48,7 +51,9 @@ const (
 
 // Adapter implements channel.Channel for QQ group bots.
 type Adapter struct {
-	cfg *config.QQBotConfig
+	cfg    *config.QQBotConfig
+	appCfg *config.Config
+	tr     transcribe.Transcriber // nil = voice not supported
 
 	tokenMu  sync.Mutex
 	token    string
@@ -63,9 +68,12 @@ type Adapter struct {
 }
 
 // New creates a QQ Bot Adapter and validates credentials.
-func New(cfg *config.Config) (*Adapter, error) {
+// tr may be nil to disable voice transcription.
+func New(cfg *config.Config, tr transcribe.Transcriber) (*Adapter, error) {
 	a := &Adapter{
 		cfg:    &cfg.QQBot,
+		appCfg: cfg,
+		tr:     tr,
 		msgIDs: make(map[string]string),
 		events: make(chan channel.InboundEvent, 16),
 	}
@@ -449,6 +457,15 @@ func (a *Adapter) serveWSConn(ctx context.Context, conn *websocket.Conn, token s
 
 // ── Event handling ────────────────────────────────────────────────────────────
 
+type qqAttachment struct {
+	ContentType string `json:"content_type"`
+	Filename    string `json:"filename"`
+	URL         string `json:"url"`
+	Size        int    `json:"size"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
+}
+
 type groupMsgEvent struct {
 	GroupOpenID string `json:"group_openid"`
 	Content     string `json:"content"`
@@ -456,6 +473,7 @@ type groupMsgEvent struct {
 	Author      struct {
 		MemberOpenID string `json:"member_openid"`
 	} `json:"author"`
+	Attachments []qqAttachment `json:"attachments"`
 }
 
 func (a *Adapter) handleDispatch(ctx context.Context, msg wsMsg) {
@@ -468,14 +486,20 @@ func (a *Adapter) handleDispatch(ctx context.Context, msg wsMsg) {
 		a.setLatestMsgID(e.GroupOpenID, e.ID)
 
 		text := strings.TrimSpace(stripAtMention(e.Content))
-		if text == "" {
-			return
-		}
+
 		ev := channel.InboundEvent{
 			UserKey:        "qq:" + e.Author.MemberOpenID,
 			ConversationID: e.GroupOpenID,
 		}
-		if strings.HasPrefix(text, "/") {
+
+		// If text is empty and there are attachments, process the first attachment.
+		if text == "" && len(e.Attachments) > 0 {
+			if !a.handleAttachment(ctx, e.Attachments[0], &ev) {
+				return
+			}
+		} else if text == "" {
+			return
+		} else if strings.HasPrefix(text, "/") {
 			parts := strings.SplitN(text[1:], " ", 2)
 			ev.IsCommand = true
 			ev.Command = strings.ToLower(strings.TrimSpace(parts[0]))
@@ -490,6 +514,163 @@ func (a *Adapter) handleDispatch(ctx context.Context, msg wsMsg) {
 		case a.events <- ev:
 		case <-ctx.Done():
 		}
+	}
+}
+
+// handleAttachment processes a QQ Bot attachment and populates ev accordingly.
+// Returns true if the event should be forwarded, false to drop it.
+func (a *Adapter) handleAttachment(ctx context.Context, att qqAttachment, ev *channel.InboundEvent) bool {
+	ct := strings.ToLower(att.ContentType)
+	switch {
+	case strings.HasPrefix(ct, "audio/"):
+		return a.handleAudio(ctx, att, ev)
+	case strings.HasPrefix(ct, "image/"):
+		return a.handleImage(ctx, att, ev)
+	default:
+		return a.handleFile(ctx, att, ev)
+	}
+}
+
+func (a *Adapter) handleAudio(ctx context.Context, att qqAttachment, ev *channel.InboundEvent) bool {
+	if a.tr == nil {
+		a.sendGroupMsg(ctx, ev.ConversationID, //nolint:errcheck
+			"⚠️ Voice transcription is not enabled.\n"+
+				"Set transcription.enabled: true in config.yaml and restart.",
+			a.getLatestMsgID(ev.ConversationID))
+		return false
+	}
+	ext := qqExtFromContentType(att.ContentType)
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("lc-qq-voice-%d%s", time.Now().UnixNano(), ext))
+	if err := a.downloadURL(ctx, att.URL, tmpFile); err != nil {
+		slog.Error("qqbot audio download failed", "err", err)
+		a.sendGroupMsg(ctx, ev.ConversationID, //nolint:errcheck
+			fmt.Sprintf("⚠️ Audio download failed: %v", err),
+			a.getLatestMsgID(ev.ConversationID))
+		return false
+	}
+	defer os.Remove(tmpFile)
+	text, err := a.tr.Transcribe(ctx, tmpFile)
+	if err != nil {
+		slog.Error("qqbot transcription failed", "err", err)
+		a.sendGroupMsg(ctx, ev.ConversationID, //nolint:errcheck
+			fmt.Sprintf("⚠️ Transcription failed: %v", err),
+			a.getLatestMsgID(ev.ConversationID))
+		return false
+	}
+	ev.Text = text
+	ev.IsVoice = true
+	return true
+}
+
+func (a *Adapter) handleImage(ctx context.Context, att qqAttachment, ev *channel.InboundEvent) bool {
+	workDir := a.appCfg.WorkDirFor(ev.ConversationID)
+	if workDir == "" {
+		workDir = "."
+	}
+	filename := qqSanitizeFilename(att.Filename)
+	if filename == "" {
+		ext := qqExtFromContentType(att.ContentType)
+		filename = fmt.Sprintf("photo_%s%s", time.Now().Format("20060102_150405"), ext)
+	}
+	destPath := filepath.Join(workDir, filename)
+	if err := a.downloadURL(ctx, att.URL, destPath); err != nil {
+		slog.Error("qqbot image download failed", "err", err)
+		a.sendGroupMsg(ctx, ev.ConversationID, //nolint:errcheck
+			fmt.Sprintf("⚠️ Image download failed: %v", err),
+			a.getLatestMsgID(ev.ConversationID))
+		return false
+	}
+	slog.Info("qqbot image saved", "path", destPath)
+	ev.Text = "[File saved to work directory: " + filename + "]"
+	return true
+}
+
+func (a *Adapter) handleFile(ctx context.Context, att qqAttachment, ev *channel.InboundEvent) bool {
+	workDir := a.appCfg.WorkDirFor(ev.ConversationID)
+	if workDir == "" {
+		workDir = "."
+	}
+	filename := qqSanitizeFilename(att.Filename)
+	if filename == "" {
+		ext := qqExtFromContentType(att.ContentType)
+		filename = fmt.Sprintf("upload_%d%s", time.Now().UnixNano(), ext)
+	}
+	destPath := filepath.Join(workDir, filename)
+	if err := a.downloadURL(ctx, att.URL, destPath); err != nil {
+		slog.Error("qqbot file download failed", "err", err)
+		a.sendGroupMsg(ctx, ev.ConversationID, //nolint:errcheck
+			fmt.Sprintf("⚠️ File download failed: %v", err),
+			a.getLatestMsgID(ev.ConversationID))
+		return false
+	}
+	slog.Info("qqbot file saved", "path", destPath)
+	ev.Text = "[File saved to work directory: " + filename + "]"
+	return true
+}
+
+// downloadURL fetches a QQ Bot attachment URL with the bot token and saves it to destPath.
+func (a *Adapter) downloadURL(ctx context.Context, url, destPath string) error {
+	token, err := a.getToken(ctx)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "QQBot "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("http get: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	f, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = io.Copy(f, resp.Body)
+	return err
+}
+
+func qqSanitizeFilename(name string) string {
+	name = filepath.Base(name)
+	name = strings.TrimLeft(name, ".")
+	return name
+}
+
+func qqExtFromContentType(contentType string) string {
+	ct := strings.ToLower(strings.SplitN(contentType, ";", 2)[0])
+	switch ct {
+	case "audio/ogg":
+		return ".ogg"
+	case "audio/amr":
+		return ".amr"
+	case "audio/aac":
+		return ".aac"
+	case "audio/mp3", "audio/mpeg":
+		return ".mp3"
+	case "audio/wav":
+		return ".wav"
+	case "audio/silk":
+		return ".silk"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ""
 	}
 }
 
