@@ -393,7 +393,9 @@ wework:
 | `/reset` | Stop current task + **clear session history**, start fresh |
 | `/compact [instructions]` | Compress the session context to save space; optional focus hint |
 | `/model [name]` | Show the current model, or switch to a different one (e.g. `claude-opus-4-6`) |
-| `/cost` | Show cumulative token usage and estimated cost for this session |
+| `/usage` | Show cumulative token usage and estimated cost for this session (alias: `/cost`) |
+| `/context` | Show context window utilisation — tokens used vs. 200k limit, as a bar graph |
+| `/config` | Show current effective configuration: model, work dir, session ID, flags, timeout |
 
 **Filesystem commands** (run directly, no Claude invocation):
 
@@ -749,7 +751,10 @@ Note: do not use both simultaneously (local CLI + Telegram) for the same session
 → Use `/model claude-opus-4-6` (or any Claude model ID). The override is stored per session and takes effect on the next message. Use `/model` with no arguments to see the current model. `/reset` clears the override along with the session history.
 
 **Q: How do I see token usage and cost?**
-→ Send `/cost`. Usage is accumulated from every Claude turn in the session and persists across bot restarts. The cost figure comes directly from Claude Code's own accounting.
+→ Send `/usage` (or the alias `/cost`). Usage is accumulated from every Claude turn in the session and persists across bot restarts. The cost figure comes directly from Claude Code's own accounting.
+
+**Q: How do I check context window utilisation?**
+→ Send `/context` after at least one message. It shows how many tokens the last turn consumed out of the 200k limit, with a bar graph. Send `/config` to see the current model, work directory, session ID, and extra flags at a glance.
 
 **Q: Can I check what Claude is doing mid-task?**
 → Yes — send `/status` at any time. The bot replies with the current tool call list and any text Claude has produced so far, identical to what is shown in the live placeholder message.
