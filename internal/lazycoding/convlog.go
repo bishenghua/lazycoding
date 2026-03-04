@@ -43,19 +43,22 @@ func color(code, s string) string {
 }
 
 // toolColor returns the ANSI color for a tool name.
+// Handles Claude Code built-ins, codex's "Exec", and fuzzy-matches opencode
+// tool names (e.g. execute_bash, read_file) based on common naming patterns.
 func toolColor(toolName string) string {
+	// Exact matches — Claude Code built-ins + sub-agent types
 	switch toolName {
-	case "Bash":
+	case "Bash", "Exec": // Exec = codex's shell tool
 		return ansiBrightCyan
-	case "Read", "Write", "Edit", "NotebookEdit":
+	case "Read", "Write", "Edit", "MultiEdit", "NotebookRead", "NotebookEdit":
 		return ansiBlue
-	case "Glob", "Grep":
+	case "Glob", "Grep", "LS":
 		return ansiMagenta
 	case "WebFetch", "WebSearch":
 		return ansiBrightGreen
-	case "AskUserQuestion", "TodoWrite":
+	case "AskUserQuestion", "TodoWrite", "TodoRead", "ExitPlanMode":
 		return ansiYellow
-	case "Agent", "claude":
+	case "Agent", "Task", "claude":
 		return ansiCyan
 	case "opencode":
 		return ansiBrightGreen
@@ -67,9 +70,33 @@ func toolColor(toolName string) string {
 		return ansiMagenta
 	case "statusline-setup":
 		return ansiYellow
+	}
+
+	// Fuzzy match for opencode / other backends with snake_case tool names
+	lower := strings.ToLower(toolName)
+	switch {
+	case containsAny(lower, "bash", "exec", "run", "command", "shell"):
+		return ansiBrightCyan
+	case containsAny(lower, "read", "write", "edit", "create", "delete", "file", "patch"):
+		return ansiBlue
+	case containsAny(lower, "grep", "search", "find", "glob", "list", "ls", "dir"):
+		return ansiMagenta
+	case containsAny(lower, "fetch", "web", "url", "http", "browse"):
+		return ansiBrightGreen
+	case containsAny(lower, "todo", "ask", "question", "plan", "task"):
+		return ansiYellow
 	default:
 		return ansiYellow
 	}
+}
+
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func ts() string {
@@ -213,45 +240,63 @@ func shortenPath(p, workDir string) string {
 	return p
 }
 
-// formatToolInput extracts a readable summary from a tool's JSON input.
+// formatToolInput extracts a readable summary from a tool's input.
+//
+// Claude Code sends JSON; codex sends plain command strings; opencode sends
+// the first meaningful field value (already extracted by its parser).
 func formatToolInput(toolName, input, workDir string) string {
 	if input == "" {
 		return ""
 	}
+
+	// Codex: "Exec" carries a plain command string, not JSON.
+	if toolName == "Exec" {
+		return truncStr(input, 1000)
+	}
+
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(input), &m); err != nil {
-		if len(input) > 100 {
-			return input[:97] + "…"
+		// Non-JSON input (opencode returns plain strings from its formatArgs).
+		// If it looks like a filesystem path, shorten it.
+		if strings.HasPrefix(input, "/") || strings.HasPrefix(input, "~") {
+			return shortenPath(truncStr(input, 1000), workDir)
 		}
-		return input
+		return truncStr(input, 1000)
 	}
 
-	getString := func(key string) string {
-		raw, ok := m[key]
-		if !ok {
-			return ""
+	getString := func(keys ...string) string {
+		for _, key := range keys {
+			raw, ok := m[key]
+			if !ok {
+				continue
+			}
+			var s string
+			if err := json.Unmarshal(raw, &s); err != nil {
+				return strings.Trim(string(raw), `"`)
+			}
+			if s != "" {
+				return s
+			}
 		}
-		var s string
-		if err := json.Unmarshal(raw, &s); err != nil {
-			return strings.Trim(string(raw), `"`)
-		}
-		return s
+		return ""
 	}
 
+	// Claude Code built-in tools
 	switch toolName {
-	case "Read", "Write", "Edit", "NotebookEdit":
-		p := getString("file_path")
+	case "Read", "Write", "Edit", "MultiEdit", "NotebookRead", "NotebookEdit":
+		p := getString("file_path", "notebook_path", "path")
+		return shortenPath(p, workDir)
+
+	case "LS":
+		p := getString("path")
 		if p == "" {
-			p = getString("notebook_path")
+			return "."
 		}
 		return shortenPath(p, workDir)
 
 	case "Bash":
 		cmd := getString("command")
-		if len(cmd) > 1000 {
-			cmd = cmd[:997] + "…"
-		}
-		return cmd
+		return truncStr(cmd, 1000)
 
 	case "Glob":
 		pat := getString("pattern")
@@ -275,33 +320,43 @@ func formatToolInput(toolName, input, workDir string) string {
 		return s
 
 	case "WebFetch":
-		url := getString("url")
-		if len(url) > 120 {
-			url = url[:117] + "…"
-		}
-		return url
+		return truncStr(getString("url"), 120)
 
 	case "WebSearch":
 		return getString("query")
 
-	case "Task":
-		desc := getString("description")
-		if len(desc) > 120 {
-			desc = desc[:117] + "…"
+	case "TodoWrite":
+		raw, ok := m["todos"]
+		if ok {
+			var todos []any
+			if err := json.Unmarshal(raw, &todos); err == nil {
+				return fmt.Sprintf("%d todos", len(todos))
+			}
 		}
-		return desc
 
-	case "Agent":
-		subagentType := getString("subagent_type")
-		desc := getString("description")
-		if desc == "" {
-			desc = getString("prompt")
+	case "TodoRead":
+		return ""
+
+	case "ExitPlanMode":
+		return ""
+
+	case "AskUserQuestion":
+		raw, ok := m["questions"]
+		if ok {
+			var questions []struct {
+				Question string `json:"question"`
+			}
+			if err := json.Unmarshal(raw, &questions); err == nil && len(questions) > 0 {
+				return truncStr(questions[0].Question, 120)
+			}
 		}
+
+	case "Task", "Agent":
+		subagentType := getString("subagent_type")
+		desc := getString("description", "prompt")
 		result := subagentType
 		if desc != "" {
-			if len(desc) > 80 {
-				desc = desc[:77] + "…"
-			}
+			desc = truncStr(desc, 80)
 			if result != "" {
 				result += ": " + desc
 			} else {
@@ -312,23 +367,35 @@ func formatToolInput(toolName, input, workDir string) string {
 			result = "agent"
 		}
 		return result
+	}
 
-	case "AskUserQuestion":
-		raw, ok := m["questions"]
-		if ok {
-			var questions []struct {
-				Question string `json:"question"`
-			}
-			if err := json.Unmarshal(raw, &questions); err == nil && len(questions) > 0 {
-				q := questions[0].Question
-				if len(q) > 120 {
-					q = q[:117] + "…"
-				}
-				return q
-			}
+	// Fuzzy match for opencode / other backends (snake_case tool names).
+	// Try common field names for the most frequent tool categories.
+	lower := strings.ToLower(toolName)
+	switch {
+	case containsAny(lower, "bash", "exec", "run", "command", "shell"):
+		cmd := getString("command", "cmd", "script")
+		return truncStr(cmd, 1000)
+
+	case containsAny(lower, "read", "write", "edit", "create", "delete", "file", "patch", "view"):
+		p := getString("path", "file_path", "filename", "target")
+		return shortenPath(p, workDir)
+
+	case containsAny(lower, "list", "ls", "dir", "directory"):
+		p := getString("path", "directory", "dir")
+		if p == "" {
+			return "."
 		}
+		return shortenPath(p, workDir)
 
-	case "TodoWrite":
+	case containsAny(lower, "grep", "search", "find", "glob"):
+		q := getString("pattern", "query", "glob", "keyword")
+		return truncStr(q, 120)
+
+	case containsAny(lower, "fetch", "web", "url", "browse", "http"):
+		return truncStr(getString("url", "uri", "link"), 120)
+
+	case containsAny(lower, "todo"):
 		raw, ok := m["todos"]
 		if ok {
 			var todos []any
@@ -336,13 +403,19 @@ func formatToolInput(toolName, input, workDir string) string {
 				return fmt.Sprintf("%d todos", len(todos))
 			}
 		}
+		return getString("content", "text")
 	}
 
-	// fallback: truncated raw JSON
-	if len(input) > 160 {
-		return input[:157] + "…"
+	// Final fallback: truncated raw JSON
+	return truncStr(input, 160)
+}
+
+// truncStr truncates s to at most max bytes, appending "…" if cut.
+func truncStr(s string, max int) string {
+	if len(s) <= max {
+		return s
 	}
-	return input
+	return s[:max-1] + "…"
 }
 
 // convLogSend logs the final Claude response.
