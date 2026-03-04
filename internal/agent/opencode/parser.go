@@ -92,18 +92,20 @@ func ParseLine(line string, sessionID *string) []agent.Event {
 	return nil
 }
 
-// formatArgs extracts a human-readable summary from a tool invocation args object.
+// formatArgs returns the raw JSON args as a string so that formatToolInput in
+// convlog.go can apply tool-specific extraction (path shortening, diff counts,
+// etc.) based on the tool name.  The only exception is "command", which is
+// extracted directly for shell-execution tools so the command string appears
+// verbatim without JSON wrapping.
 func formatArgs(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err == nil {
-		for _, key := range []string{"command", "description", "path", "query", "content"} {
-			if v, ok := m[key]; ok {
-				if s, ok := v.(string); ok {
-					return strings.TrimSpace(s)
-				}
+		if v, ok := m["command"]; ok {
+			if s, ok := v.(string); ok && s != "" {
+				return strings.TrimSpace(s)
 			}
 		}
 	}

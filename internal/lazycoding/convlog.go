@@ -411,8 +411,27 @@ func formatToolInput(toolName, input, workDir string) string {
 		cmd := getString("command", "cmd", "script")
 		return truncStr(cmd, 1000)
 
-	case containsAny(lower, "read", "write", "edit", "create", "delete", "file", "patch", "view"):
-		p := getString("path", "file_path", "filename", "target")
+	case containsAny(lower, "edit", "patch", "update", "modify", "replace"):
+		p := getString("file_path", "path", "filename", "target")
+		path := shortenPath(p, workDir)
+		old := getString("old_string", "old", "original", "search")
+		nw := getString("new_string", "new", "replacement")
+		if old != "" || nw != "" {
+			return fmt.Sprintf("%s  (-%d/+%d)", path, lineCount(old), lineCount(nw))
+		}
+		return path
+
+	case containsAny(lower, "write", "create", "save", "append"):
+		p := getString("file_path", "path", "filename", "target")
+		path := shortenPath(p, workDir)
+		content := getString("content", "text", "source", "data")
+		if content != "" {
+			return fmt.Sprintf("%s  (%d lines)", path, lineCount(content))
+		}
+		return path
+
+	case containsAny(lower, "read", "view", "show", "cat", "display", "delete", "remove", "file"):
+		p := getString("file_path", "path", "filename", "target")
 		return shortenPath(p, workDir)
 
 	case containsAny(lower, "list", "ls", "dir", "directory"):
